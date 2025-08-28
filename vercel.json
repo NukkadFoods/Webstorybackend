@@ -1,5 +1,4 @@
 {
-  "name": "webstory-backend",
   "version": 2,
   "builds": [
     {
@@ -12,11 +11,5 @@
       "src": "/(.*)",
       "dest": "/server.js"
     }
-  ],
-  "env": {
-    "MONGODB_URI": "@mongodb_uri",
-    "GROQ_API_KEY": "@groq_api_key",
-    "NEWS_API_KEY": "@news_api_key",
-    "NODE_ENV": "production"
-  }
+  ]
 }

@@ -2,6 +2,16 @@ const Article = require('../../models/article');
 const { connectToMongoDB, isConnected } = require('../../config/database');
 
 /**
+ * Ensure database connection before operations
+ */
+const ensureConnection = async () => {
+  if (!isConnected()) {
+    console.log('Establishing database connection...');
+    await connectToMongoDB();
+  }
+};
+
+/**
  * Save an article to the database
  * @param {Object} articleData - Article data to save
  * @returns {Promise<Object>} Saved article
@@ -9,9 +19,7 @@ const { connectToMongoDB, isConnected } = require('../../config/database');
 const saveArticle = async (articleData) => {
   try {
     // Ensure we're connected to MongoDB
-    if (!isConnected()) {
-      await connectToMongoDB();
-    }
+    await ensureConnection();
     
     // Check if the article already exists by URL
     const existingArticle = await Article.findOne({ url: articleData.url });
@@ -41,9 +49,7 @@ const saveArticle = async (articleData) => {
 const saveArticles = async (articles) => {
   try {
     // Ensure we're connected to MongoDB
-    if (!isConnected()) {
-      await connectToMongoDB();
-    }
+    await ensureConnection();
     
     const savedArticles = [];
     
@@ -128,9 +134,7 @@ const searchArticles = async (keyword, limit = 10) => {
 const getAllArticles = async (limit = 100) => {
   try {
     // Ensure we're connected to MongoDB
-    if (!isConnected()) {
-      await connectToMongoDB();
-    }
+    await ensureConnection();
     
     const articles = await Article.find()
       .sort({ publishedDate: -1 })
