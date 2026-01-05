@@ -3,10 +3,20 @@ const router = express.Router();
 const Groq = require('groq-sdk');
 const { optimizedGroqCall, optimizedFetch } = require('../middleware/optimizationManager');
 
-// Initialize GROQ client
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY
-});
+// Initialize GROQ client with error handling
+let groq = null;
+if (process.env.GROQ_API_KEY) {
+  try {
+    groq = new Groq({
+      apiKey: process.env.GROQ_API_KEY
+    });
+    console.log('✅ Groq API client initialized successfully');
+  } catch (error) {
+    console.error('❌ Failed to initialize Groq API client:', error);
+  }
+} else {
+  console.warn('⚠️ GROQ_API_KEY not found in environment variables');
+}
 
 /**
  * Generate AI commentary for an article
@@ -14,6 +24,15 @@ const groq = new Groq({
  */
 router.post('/generate-commentary', async (req, res) => {
   try {
+    // Check if Groq client is initialized
+    if (!groq) {
+      console.error('❌ Groq API client not initialized');
+      return res.status(503).json({
+        error: 'Service unavailable',
+        message: 'AI commentary service is temporarily unavailable'
+      });
+    }
+
     const { title, content, category } = req.body;
 
     if (!title || !content) {
@@ -75,7 +94,13 @@ Keep the tone professional and analytical. Provide only the commentary without a
     });
 
   } catch (error) {
-    console.error('❌ Error generating commentary:', error);
+    console.error('❌ Error generating commentary:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name,
+      statusCode: error.statusCode,
+      requestBody: { title, content: content?.substring(0, 100) + '...', category }
+    });
     
     // Check if it's a rate limit error
     if (error.message && error.message.includes('Rate limit')) {
@@ -86,9 +111,18 @@ Keep the tone professional and analytical. Provide only the commentary without a
       });
     }
     
+    // Check if it's a Groq API error
+    if (error.message && (error.message.includes('API key') || error.message.includes('authentication'))) {
+      return res.status(500).json({
+        error: 'Configuration error',
+        message: 'AI service is not properly configured. Please contact support.'
+      });
+    }
+    
     res.status(500).json({
       error: 'Failed to generate commentary',
-      message: error.message
+      message: error.message || 'An unexpected error occurred',
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
