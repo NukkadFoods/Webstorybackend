@@ -4,12 +4,12 @@
 
 ### 1. MongoDB Connection
 ```bash
-MONGODB_URI=mongodb+srv://mahendrabahubali:your_password@cluster0.pfudopf.mongodb.net/webstory?retryWrites=true&w=majority
+MONGODB_URI=mongodb+srv://username:password@your-cluster.mongodb.net/webstory?retryWrites=true&w=majority
 ```
 
 ### 2. Redis Cloud Connection
 ```bash
-REDIS_URL=redis://default:your_redis_password@redis-14824.c330.asia-south1-1.gce.redns.redis-cloud.com:14824
+REDIS_URL=redis://default:password@your-redis-host.redis-cloud.com:port
 ```
 
 ### 3. Groq API Key
