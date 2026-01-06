@@ -6,7 +6,7 @@ class GroqCommentaryService {
     this.groq = new Groq({
       apiKey: process.env.GROQ_API_KEY
     });
-    this.cache = CacheService.getCache('ai');
+    this.cache = CacheService;
     this.promptTemplates = {
       expertise: `You are an expert in {topic}. Provide a brief, insightful commentary on this news article as if you're a knowledgeable Reddit user. Be specific, analytical, and add context that most readers wouldn't know. Keep it under 150 words.
 

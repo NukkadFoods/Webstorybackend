@@ -2,27 +2,26 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const { Groq } = require('groq-sdk');
 const { connectToMongoDB } = require('./config/database');
 const CacheService = require('./services/cache');
 const CronService = require('./services/cronService');
-
-// 🚀 Import optimization components
-const { optimizationManager, optimizedFetch, optimizedGroqCall, optimizedDbOperation } = require('./middleware/optimizationManager');
-const { createDashboardRoute } = require('./middleware/performanceMonitor');
-const { edgeCacheManager, setupCompression } = require('./middleware/edgeCacheManager');
-const commentaryWorker = require('./services/commentaryWorker');
+const RedisRefreshService = require('./services/redisRefreshService');
+const groqLoadBalancer = require('./services/groqLoadBalancer');
+const newsdataLoadBalancer = require('./services/newsdataLoadBalancer');
+const sectionRotationWorker = require('./workers/sectionRotationWorker');
 
 const app = express();
 const port = process.env.PORT || 3001;
 
-// 🚀 Initialize optimization manager early
-optimizationManager.initialize().catch(console.error);
-
 // Initialize cron jobs
 CronService.initializeJobs();
 
-// Initialize Groq client only if API key is available
+// Start section rotation worker (1 article per section every 5 minutes)
+sectionRotationWorker.start();
+
+// Initialize Groq client only if API key is available (legacy fallback)
 let groq = null;
 if (process.env.GROQ_API_KEY) {
   groq = new Groq({
@@ -91,16 +90,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.use(express.json());
-
-// 🚀 Apply optimization middleware stack
-const middlewareStack = optimizationManager.getMiddlewareStack();
-middlewareStack.forEach(middleware => app.use(middleware));
-
-// 🌐 Add edge caching middleware
-app.use(edgeCacheManager.middleware());
-
-// 🗜️ Enhanced compression for better performance
-app.use(setupCompression());
+app.use(compression()); // Gzip compression
 
 // Handle preflight OPTIONS requests explicitly
 app.options('*', (req, res) => {
@@ -119,19 +109,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// 🚀 Performance dashboard route
-app.get('/api/performance', createDashboardRoute());
-
 // 🚀 System status route
 app.get('/api/system-status', (req, res) => {
-  const systemStatus = optimizationManager.getSystemStatus();
-  const commentaryStats = commentaryWorker.getStats();
-  
   res.json({
-    ...systemStatus,
-    commentaryWorker: commentaryStats,
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
     optimizations: {
-      multiTierCaching: '✅ Active (Memory + Redis fallback)',
+      multiTierCaching: '✅ Active (Redis)',
       groqRateLimiting: '✅ Active (5500 tokens/minute)',
       databasePooling: '✅ Active (10 connections)',
       performanceMonitoring: '✅ Active',
@@ -155,13 +139,17 @@ const databaseRoutes = require('./routes/database');
 const newsletterRoutes = require('./routes/newsletter');
 const commentaryRoutes = require('./routes/commentary');
 const seoRoutes = require('./routes/seo');
+const youtubeRoutes = require('./routes/youtube');
+const sectionsRoutes = require('./routes/sections');
 
 // Mount routes  
 app.use('/', monitoringRoutes);
 app.use('/api/articles', articlesRoutes);
+app.use('/api/sections', sectionsRoutes);
 app.use('/api/debug', debugRoutes);
 app.use('/api/database', databaseRoutes);
 app.use('/api/newsletter', newsletterRoutes);
+app.use('/api/youtube', youtubeRoutes);
 app.use('/', seoRoutes); // SEO routes for sitemap.xml and robots.txt
 
 // Vercel Cron endpoint for newsletter (GET - for Vercel cron)
@@ -239,6 +227,88 @@ app.post('/api/cron/newsletter', async (req, res) => {
 });
 
 app.use('/api', commentaryRoutes);
+
+// � Load Balancer Status Endpoint
+app.get('/api/groq-status', (req, res) => {
+  try {
+    if (!groqLoadBalancer) {
+      return res.status(503).json({
+        error: 'Load balancer not initialized',
+        message: 'No Groq API keys configured'
+      });
+    }
+    
+    const stats = groqLoadBalancer.getStats();
+    res.json({
+      success: true,
+      loadBalancer: stats,
+      message: `Using ${stats.availableKeys}/${stats.totalKeys} API keys`,
+      canGenerateMore: stats.remainingTokens > 5000
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// � Section Rotation Worker Status Endpoint
+app.get('/api/rotation-status', (req, res) => {
+  try {
+    const status = sectionRotationWorker.getStatus();
+    res.json({
+      success: true,
+      worker: status,
+      message: `Processing ${status.currentSection} (${status.currentIndex + 1}/${status.totalSections})`
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// �📊 Cache Status Endpoint
+app.get('/api/cache-status', async (req, res) => {
+  try {
+    const redisStatus = RedisRefreshService.getStatus();
+    const groqStats = groqLoadBalancer ? groqLoadBalancer.getStats() : null;
+    
+    res.json({
+      success: true,
+      redis: redisStatus,
+      groq: groqStats,
+      architecture: {
+        browser: '5 minutes TTL',
+        redis: '30 minutes TTL',
+        mongodb: 'Source of truth',
+        refreshStrategy: 'Lazy refresh (on-access)',
+        note: 'Redis refreshes automatically when articles are accessed with stale cache'
+      },
+      timestamp: new Date()
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// 🔄 Manual Redis Refresh Endpoint (for external schedulers like Vercel Cron)
+app.post('/api/refresh-cache', async (req, res) => {
+  try {
+    const result = await RedisRefreshService.refreshCache();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 
 // Endpoint to list available models
 app.get('/api/list-models', async (req, res) => {
@@ -327,14 +397,18 @@ app.use(async (req, res, next) => {
 process.on('SIGTERM', async () => {
   console.log('🔄 SIGTERM received, shutting down gracefully...');
   try {
-    // Stop background worker
-    commentaryWorker.stop();
+    // Stop BullMQ commentary queue and worker
+    const { shutdown } = require('./workers/commentaryQueue');
+    await shutdown();
     
-    // Shutdown optimization manager
-    await optimizationManager.shutdown();
-    
+    // Disconnect from MongoDB
     const { disconnectFromMongoDB } = require('./config/database');
     await disconnectFromMongoDB();
+    
+    // Close Redis connection
+    const redis = require('./config/redis');
+    await redis.quit();
+    
     console.log('✅ Graceful shutdown complete');
   } catch (error) {
     console.error('❌ Error during shutdown:', error);
@@ -345,14 +419,18 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
   console.log('🔄 SIGINT received, shutting down gracefully...');
   try {
-    // Stop background worker
-    commentaryWorker.stop();
+    // Stop BullMQ commentary queue and worker
+    const { shutdown } = require('./workers/commentaryQueue');
+    await shutdown();
     
-    // Shutdown optimization manager
-    await optimizationManager.shutdown();
-    
+    // Disconnect from MongoDB
     const { disconnectFromMongoDB } = require('./config/database');
     await disconnectFromMongoDB();
+    
+    // Close Redis connection
+    const redis = require('./config/redis');
+    await redis.quit();
+    
     console.log('✅ Graceful shutdown complete');
   } catch (error) {
     console.error('❌ Error during shutdown:', error);
@@ -363,15 +441,11 @@ process.on('SIGINT', async () => {
 // Start the server after attempting database initialization
 dbConnectionPromise
   .then(() => {
-    // Preload cache with critical data
-    optimizationManager.preloadCache().catch(console.error);
+    console.log('✅ Database connected, server ready');
     
-    // Start background commentary worker
-    commentaryWorker.start();
-    commentaryWorker.populateQueue().catch(console.error);
-    
-    // Preload edge cache
-    edgeCacheManager.preloadCriticalContent().catch(console.error);
+    // Start section rotation worker (generates commentary for 1 article per section every 5 min)
+    console.log('🔄 Starting Section Rotation Worker...');
+    sectionRotationWorker.start();
     
     // Only start server if not in Vercel environment
     if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {

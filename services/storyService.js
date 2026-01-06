@@ -1,34 +1,35 @@
-// Story service for backend
-const API_KEY = process.env.NYT_API_KEY;
-const BASE_URL = 'https://api.nytimes.com/svc/';
+/**
+ * Story Service - ONLY returns complete articles from DB
+ * 
+ * CRITICAL: Client NEVER gets incomplete articles
+ * Flow: DB (complete articles only) → Client
+ * Background: ArticleFetcherService handles NYT → Commentary → DB
+ */
 
+const sectionArticleService = require('./db/sectionArticleService');
+
+/**
+ * Get top stories for a section
+ * ONLY returns articles WITH commentary from DB
+ * NO direct NYT fetching - that's handled by ArticleFetcherService
+ */
 const getTopStories = async (section = 'home') => {
   try {
-    if (!API_KEY) {
-      console.error('NYT_API_KEY not found in environment variables');
-      return [];
-    }
+    console.log(`\n📰 [Story Service] Getting complete articles for: ${section.toUpperCase()}`);
+    
+    // ✅ ONLY return articles WITH commentary from database
+    const completeArticles = await sectionArticleService.getArticlesBySection(
+      section,
+      20, // limit
+      0   // skip
+    );
 
-    console.log(`Fetching top stories for section: ${section}`);
-    const url = `${BASE_URL}topstories/v2/${section}.json?api-key=${API_KEY}`;
+    console.log(`✅ [DB] Returning ${completeArticles.length} COMPLETE articles to client`);
     
-    const response = await fetch(url);
+    return completeArticles;
     
-    if (!response.ok) {
-      console.error(`NYT API Error: ${response.status} ${response.statusText}`);
-      if (response.status === 429) {
-        console.error('NYT API rate limit exceeded');
-      } else if (response.status === 401) {
-        console.error('NYT API key is invalid or expired');
-      }
-      throw new Error(`Error: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    console.log(`Successfully fetched ${data.results?.length || 0} articles`);
-    return data.results || [];
   } catch (error) {
-    console.error('Error fetching top stories:', error);
+    console.error('❌ Error fetching complete articles:', error);
     return [];
   }
 };

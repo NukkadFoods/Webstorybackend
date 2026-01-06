@@ -21,8 +21,12 @@ if (process.env.GROQ_API_KEY) {
 /**
  * Generate AI commentary for an article
  * POST /api/generate-commentary
+ * 🚀 ARCHITECTURE FIX: Returns immediately, queues Groq call in background
  */
 router.post('/generate-commentary', async (req, res) => {
+  // Declare variables outside try-catch so they're accessible in catch block
+  let title, content, category;
+  
   try {
     // Check if Groq client is initialized
     if (!groq) {
@@ -33,7 +37,10 @@ router.post('/generate-commentary', async (req, res) => {
       });
     }
 
-    const { title, content, category } = req.body;
+    // Assign values from request body
+    title = req.body.title;
+    content = req.body.content;
+    category = req.body.category;
 
     if (!title || !content) {
       return res.status(400).json({
@@ -44,53 +51,41 @@ router.post('/generate-commentary', async (req, res) => {
     // Create cache key for this specific commentary request
     const cacheKey = `commentary:${Buffer.from(title + content).toString('base64').substring(0, 32)}`;
     
-    // Use optimized cache and Groq API call
-    const commentary = await optimizedFetch(
-      cacheKey,
-      async () => {
-        // Create the prompt for GROQ
-        const prompt = `As an expert analyst, provide a brief but insightful commentary (2-3 paragraphs) on the following ${category || 'news'} article:
-
-Title: ${title}
-Content: ${content}
-
-Focus on:
-1. Key implications and potential impacts
-2. Expert analysis of the situation
-3. Historical context or similar cases if relevant
-4. Potential future developments
-
-Keep the tone professional and analytical. Provide only the commentary without any prefacing text.`;
-
-        // Use optimized Groq API call with rate limiting
-        const completion = await optimizedGroqCall(async () => {
-          return await groq.chat.completions.create({
-            messages: [
-              {
-                role: "system",
-                content: "You are an expert news analyst who provides insightful commentary on current events. Your analysis should be professional, balanced, and informative."
-              },
-              {
-                role: "user",
-                content: prompt
-              }
-            ],
-            model: "llama-3.1-8b-instant",
-            temperature: 0.7,
-            max_tokens: 500
-          });
-        }, 'high'); // High priority for user-facing requests
-
-        return completion.choices[0]?.message?.content || 'Unable to generate commentary at this time.';
-      },
-      'commentary' // Use commentary caching strategy
-    );
-
+    // 🚀 CRITICAL: Check cache first - if exists, return immediately
+    const cache = require('../services/cache');
+    const cachedCommentary = await cache.get(cacheKey);
+    
+    if (cachedCommentary) {
+      console.log(`⚡ Commentary cache hit: ${cacheKey}`);
+      return res.json({
+        success: true,
+        commentary: cachedCommentary,
+        cached: true
+      });
+    }
+    
+    // 🚀 ARCHITECTURE FIX: Queue the job and return "generating" status immediately
+    // User doesn't wait for Groq - gets instant response
+    const { addToQueue } = require('../workers/commentaryQueue');
+    const article = {
+      _id: req.body.articleId || `temp-${Date.now()}`,
+      title,
+      content,
+      section: category
+    };
+    
+    // Add to queue with high priority (user-requested)
+    addToQueue(article, { priority: 1 })
+      .then(job => console.log(`📝 Queued commentary generation: Job ${job.id}`))
+      .catch(err => console.log(`⚠️ Queue error:`, err.message));
+    
+    // Return immediately with "generating" status
     res.json({
       success: true,
-      commentary: (commentary && typeof commentary === 'string') 
-        ? commentary.trim() 
-        : 'Unable to generate commentary at this time.'
+      commentary: null,
+      generating: true,
+      message: 'Commentary is being generated. Please check back in a few seconds.',
+      cacheKey // Frontend can poll this key
     });
 
   } catch (error) {
@@ -123,6 +118,36 @@ Keep the tone professional and analytical. Provide only the commentary without a
       error: 'Failed to generate commentary',
       message: error.message || 'An unexpected error occurred',
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+/**
+ * 🚀 GET /api/check-commentary - Poll endpoint for commentary status
+ * Frontend can use this to check if commentary generation is complete
+ */
+router.get('/check-commentary/:cacheKey', async (req, res) => {
+  try {
+    const { cacheKey } = req.params;
+    const cache = require('../services/cache');
+    
+    const commentary = await cache.get(cacheKey);
+    
+    if (commentary) {
+      res.json({
+        ready: true,
+        commentary: commentary
+      });
+    } else {
+      res.json({
+        ready: false,
+        message: 'Commentary is still generating...'
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to check commentary status',
+      message: error.message
     });
   }
 });

@@ -5,6 +5,20 @@ const { v4: uuidv4 } = require('uuid');
 const { saveArticle, saveArticles, getArticlesBySection, searchArticles, getAllArticles, deleteArticleByUrl, getArticleById, getArticleByUrl, findArticleByIdentifier } = require('../services/db/articleService');
 const { optimizedFetch, optimizedDbOperation } = require('../middleware/optimizationManager');
 
+// 🚀 Browser Cache Middleware - Implements Cache-Control headers per architecture diagram
+const browserCacheMiddleware = (req, res, next) => {
+  // Set Cache-Control headers for browser caching
+  // public: cacheable by browsers and CDNs
+  // max-age=300: Browser can use cached version for 5 minutes without revalidating
+  // s-maxage=600: CDN can cache for 10 minutes
+  // stale-while-revalidate=60: Serve stale content while fetching fresh data
+  res.set({
+    'Cache-Control': 'public, max-age=300, s-maxage=600, stale-while-revalidate=60',
+    'Vary': 'Accept-Encoding' // Cache different versions for compressed/uncompressed
+  });
+  next();
+};
+
 // NYT API configuration
 const NYT_API_KEY = process.env.NYT_API_KEY;
 const NYT_BASE_URL = 'https://api.nytimes.com/svc';
@@ -338,11 +352,61 @@ async function saveArticlesToDatabase(articles, category) {
   }
 }
 
-// GET /api/articles - Get all articles with optimized caching and auto-fetch
-// GET /api/articles - Get all articles with optimized caching and auto-fetch
-router.get('/', async (req, res) => {
+// 🚀 GET /api/articles/top20 - ULTRA-FAST Redis List endpoint (<50ms latency)
+// Implements the architecture diagram's "Hot Path" for homepage
+router.get('/top20', browserCacheMiddleware, async (req, res) => {
   try {
-    console.log('📰 Articles API called - fetching all articles');
+    const cache = require('../services/cache');
+    
+    // 1. Get article IDs from Redis List (lightning fast)
+    const articleIds = await cache.getFromList('homepage:top20', 0, 19);
+    
+    if (articleIds.length === 0) {
+      console.log('📋 Redis List empty, falling back to standard endpoint');
+      return res.redirect('/api/articles?category=home&limit=20');
+    }
+    
+    // 2. Fetch full article data from cache (keys like article:ID)
+    const articles = [];
+    for (const id of articleIds) {
+      const article = await cache.get(`article:${id}`);
+      if (article) {
+        articles.push(normalizeArticleFormat(article));
+      }
+    }
+    
+    // 3. If cache misses, fetch from DB
+    if (articles.length < articleIds.length) {
+      console.log(`⚠️ Cache miss for ${articleIds.length - articles.length} articles, fetching from DB`);
+      const { findArticleByIdentifier } = require('../services/db/articleService');
+      
+      for (const id of articleIds) {
+        if (!articles.find(a => a.id === id || a._id?.toString() === id)) {
+          const dbArticle = await findArticleByIdentifier(id);
+          if (dbArticle) {
+            articles.push(normalizeArticleFormat(dbArticle));
+            // Re-cache for next request
+            await cache.set(`article:${id}`, dbArticle, 'article');
+          }
+        }
+      }
+    }
+    
+    console.log(`⚡ Served ${articles.length} articles from Redis List (Hot Path)`);
+    res.json(articles);
+    
+  } catch (error) {
+    console.error('❌ Redis List endpoint error:', error.message);
+    // Graceful fallback to standard endpoint
+    res.redirect('/api/articles?category=home&limit=20');
+  }
+});
+
+// GET /api/articles - Get all articles with optimized caching and auto-fetch
+// GET /api/articles - Get all articles with optimized caching and auto-fetch
+router.get('/', browserCacheMiddleware, async (req, res) => {
+  try {
+    console.log('📰 Articles API called - fetching articles');
     
     // Get query parameters
     const { category = 'home', limit = 20, offset = 0, q: searchQuery } = req.query;
@@ -351,84 +415,132 @@ router.get('/', async (req, res) => {
 
     // Map frontend categories to backend sections
     const categoryToSectionMap = {
-      'home': null, // Get all sections for home
-      'politics': 'us',
+      'home': null, // Get 2-3 articles from each section for homepage
+      'politics': 'politics',
       'business': 'business',
       'technology': 'technology',
       'health': 'health',
       'entertainment': 'entertainment',
-      'wallstreet': 'wallstreet',
       'finance': 'finance',
-      'science': 'science',
       'sports': 'sports',
       'world': 'world',
-      'travel': 'travel',
       'us': 'us'
     };
 
-    const mappedSection = categoryToSectionMap[category] || category;
+    const mappedSection = category === 'home' ? null : (categoryToSectionMap[category] || category);
     
-    console.log(`🔍 Fetching articles - Category: ${category}, Mapped Section: ${mappedSection}, Limit: ${limitNum}, Offset: ${offsetNum}`);
+    console.log(`🔍 Fetching articles - Category: ${category}, Mapped Section: ${mappedSection || 'ALL'}, Limit: ${limitNum}, Offset: ${offsetNum}`);
 
     // Create cache key based on mapped section and other parameters
     const cacheKey = `articles-${mappedSection || 'all'}-${limitNum}-${offsetNum}-${searchQuery || 'none'}`;
     
-    // TEMPORARY FIX: Bypass optimization to avoid cached empty results
     let articles;
     
     try {
-      // Ensure database connection and fetch articles directly first
+      // Ensure database connection
       const { waitForConnection } = require('../config/database');
       await waitForConnection(5000); // Wait up to 5 seconds for connection
       
       if (mappedSection) {
         // Get articles for specific section
-        articles = await getArticlesBySection(mappedSection, limitNum, offsetNum);
+        articles = await getArticlesBySection(mappedSection, limitNum);
         console.log(`🔍 Fetched ${articles?.length || 0} articles from database for section: ${mappedSection}`);
       } else {
-        // Get all articles for home page
-        articles = await getAllArticles(limitNum, offsetNum, null, searchQuery);
-        console.log(`🔍 Fetched ${articles?.length || 0} articles from database (all sections)`);
+        // Homepage: Get 2-3 articles from each of the 9 sections
+        console.log('🏠 Fetching homepage articles (2-3 from each section)...');
+        
+        try {
+          // Check Redis cache first
+          const CacheService = require('../services/cache');
+          const cacheKey = 'homepage:articles';
+          const cached = await CacheService.get(cacheKey);
+          
+          if (cached) {
+            articles = cached; // CacheService.get already parses JSON
+            console.log(`⚡ Cache HIT for homepage: ${articles.length} articles`);
+          } else {
+            console.log('💫 Cache MISS - Fetching from database...');
+            // Fetch from database
+            const sections = ['world', 'us', 'politics', 'business', 'technology', 'health', 'sports', 'entertainment', 'finance'];
+            const articlesPerSection = 2;
+            
+            console.log(`🔍 Querying ${sections.length} sections, ${articlesPerSection} articles each...`);
+            const allSectionArticles = await Promise.all(
+              sections.map(section => getArticlesBySection(section, articlesPerSection))
+            );
+            
+            console.log(`📊 Raw results: ${allSectionArticles.map(a => a.length).join(', ')}`);
+            
+            // Flatten and mix sections
+            articles = allSectionArticles.flat().filter(a => a); // Remove nulls
+            console.log(`🏠 Fetched ${articles?.length || 0} articles for homepage from all sections`);
+            
+            // Normalize articles BEFORE caching to ensure clean JSON
+            articles = articles.map(article => normalizeArticleFormat(article));
+            
+            // Cache for 10 minutes if we have articles
+            if (articles && articles.length > 0) {
+              await CacheService.set(cacheKey, articles, 600); // 10 min TTL - CacheService will stringify
+              console.log(`💾 Cached ${articles.length} homepage articles for 10 minutes`);
+            } else {
+              console.log('⚠️  No articles found to cache');
+            }
+          }
+        } catch (error) {
+          console.error('❌ Homepage fetch error:', error.message);
+          articles = [];
+        }
       }
       
       // If we have articles from database, use them
       if (articles && articles.length > 0) {
         console.log(`✅ Using ${articles.length} articles from database`);
-        const normalizedArticles = articles.map(article => normalizeArticleFormat(article));
-        res.json(normalizedArticles);
+        // Articles are already normalized (either from cache or fresh DB query)
+        res.json(articles);
         return;
       }
       
-      // If no database articles, fetch fresh from API (NO CACHING for now)
-      console.log('🌐 No database articles found, fetching fresh from API...');
-      
-      // Fetch from NYT Top Stories API
-      const endpoint = category === 'home' ? '/topstories/v2/home.json' : `/topstories/v2/${category}.json`;
-      const data = await fetchFromNYT(endpoint);
-      let freshArticles = processNYTArticles(data.results || []);
-      
-      // Apply search filter if provided
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        freshArticles = freshArticles.filter(article => 
-          article.title.toLowerCase().includes(query) ||
-          article.content.toLowerCase().includes(query) ||
-          article.author.toLowerCase().includes(query)
-        );
-      }
-      
-      // Apply pagination
-      freshArticles = freshArticles.slice(offsetNum, offsetNum + limitNum);
+      // If no database articles, return empty array (don't fetch from API)
+      console.log('⚠️ No articles found in database yet - worker is building database');
+      res.json([]);
+      return;
       
       // Save articles to database in background
-      saveArticlesToDatabase(freshArticles, category).catch(err => 
+      saveArticlesToDatabase(freshArticles, category).then(savedArticles => {
+        // 🚀 UPDATE REDIS LIST for "Top 20" hot path (homepage only)
+        if (category === 'home' && savedArticles && savedArticles.length > 0) {
+          const cache = require('../services/cache');
+          const articleIds = savedArticles.slice(0, 20).map(a => a._id.toString());
+          cache.pushToList('homepage:top20', articleIds, 20).catch(err =>
+            console.log('⚠️ Redis list update failed:', err.message)
+          );
+        }
+      }).catch(err => 
         console.log('⚠️ Background save failed:', err.message)
       );
       
-      // Start background commentary generation for new articles
-      generateCommentaryForArticles(freshArticles.slice(0, 5)).catch(err => 
-        console.log('⚠️ Background commentary generation failed:', err.message)
-      );
+      // ✅ Queue top articles for background commentary generation (respects rate limits)
+      // BullMQ will process them one-by-one with proper rate limiting and caching
+      if (freshArticles.length > 0) {
+        const { addBatchToQueue } = require('../workers/commentaryQueue');
+        const topArticles = freshArticles.slice(0, 10); // Queue top 10 articles
+        
+        // Queue with low priority (7) and staggered 30s delays so user-requested commentary gets precedence
+        addBatchToQueue(topArticles.map(article => ({
+          _id: article.id,
+          title: article.title,
+          content: article.content || article.abstract,
+          section: article.section,
+          createdAt: article.publishedDate
+        })), {
+          priority: 7, // Low priority for background jobs
+          baseDelay: 30000 // 30 seconds between each article
+        }).then(jobs => {
+          console.log(`📦 Queued ${jobs.length} articles for background commentary (low priority, staggered)`);
+        }).catch(err => {
+          console.log('⚠️ Background commentary queue failed:', err.message);
+        });
+      }
       
       console.log(`🌐 Fetched ${freshArticles.length} fresh articles from API`);
       articles = freshArticles.map(article => normalizeArticleFormat(article));
@@ -603,11 +715,107 @@ router.get('/:id', async (req, res) => {
       });
     }
     
-    // Add AI commentary if requested
+    // 🚀 Check Redis for FULL article (with commentary) FIRST
     if (includeAI) {
-      const GroqCommentary = require('../services/ai/groqCommentary');
-      const commentary = await GroqCommentary.generateCommentary(article, 'analysis');
-      article.aiCommentary = commentary;
+      const articleId = article._id || article.id || id;
+      const articleCacheKey = `article:${articleId}`;
+      
+      try {
+        // Check if we have the full article in Redis cache
+        const cachedArticle = await cacheService.get(articleCacheKey);
+        
+        if (cachedArticle) {
+          try {
+            const parsedArticle = JSON.parse(cachedArticle);
+            if (parsedArticle.aiCommentary) {
+              console.log(`⚡ Using full article from Redis cache for ${articleId}`);
+              
+              // 🔄 LAZY REFRESH: Check if cache is stale (>25 min old), refresh in background
+              const cacheAge = Date.now() - new Date(parsedArticle._cachedAt).getTime();
+              const staleThreshold = 25 * 60 * 1000; // 25 minutes
+              
+              if (cacheAge > staleThreshold) {
+                console.log(`♻️  Cache is stale (${Math.floor(cacheAge/60000)}min old), refreshing in background...`);
+                // Refresh in background without blocking response
+                setImmediate(async () => {
+                  try {
+                    const fullArticle = {
+                      _id: article._id,
+                      title: article.title,
+                      headline: article.headline || article.title,
+                      abstract: article.abstract,
+                      url: article.url,
+                      imageUrl: article.imageUrl,
+                      byline: article.byline,
+                      section: article.section,
+                      publishedDate: article.publishedDate,
+                      aiCommentary: article.aiCommentary || parsedArticle.aiCommentary,
+                      _cachedAt: new Date(),
+                      _commentarySource: 'lazy-refresh'
+                    };
+                    await cacheService.set(articleCacheKey, JSON.stringify(fullArticle), 1800);
+                    console.log(`✅ Background refresh complete for ${articleId}`);
+                  } catch (refreshError) {
+                    console.error('Background refresh failed:', refreshError);
+                  }
+                });
+              }
+              
+              // Merge cached data with DB article (preserve DB fields)
+              article.aiCommentary = parsedArticle.aiCommentary;
+              article._commentarySource = 'redis-cache';
+              article._cachedAt = parsedArticle._cachedAt;
+              return res.json(article);
+            }
+          } catch (parseError) {
+            console.error('Error parsing cached article:', parseError);
+          }
+        }
+        
+        // No Redis cache - check if DB has commentary
+        if (!article.aiCommentary) {
+          // No cache and no DB commentary - queue for generation
+          console.log(`📝 No commentary found, queuing generation for ${articleId}`);
+          const { addToQueue } = require('../workers/commentaryQueue');
+          await addToQueue(article, { priority: 1 }); // High priority for user-requested
+          
+          article.aiCommentary = null;
+          article._commentaryQueued = true;
+        } else {
+          // DB has commentary but Redis cache missed - cache it now!
+          console.log(`📦 Caching DB commentary to Redis for ${articleId}`);
+          const fullArticle = {
+            _id: article._id,
+            title: article.title,
+            headline: article.headline || article.title,
+            abstract: article.abstract,
+            url: article.url,
+            imageUrl: article.imageUrl,
+            byline: article.byline,
+            section: article.section,
+            publishedDate: article.publishedDate,
+            aiCommentary: article.aiCommentary,
+            _cachedAt: new Date(),
+            _commentarySource: 'database'
+          };
+          
+          // Cache in background
+          setImmediate(async () => {
+            try {
+              await cacheService.set(articleCacheKey, JSON.stringify(fullArticle), 1800);
+              console.log(`💾 Cached DB article to Redis: ${articleId}`);
+            } catch (cacheError) {
+              console.error('Failed to cache article:', cacheError);
+            }
+          });
+          
+          article._commentarySource = 'database';
+        }
+      } catch (cacheError) {
+        console.error('Error checking Redis cache:', cacheError);
+        // Fallback to DB commentary if it exists
+        article._commentarySource = 'database-fallback';
+      }
     }
     
     res.json(article);
@@ -617,6 +825,120 @@ router.get('/:id', async (req, res) => {
       error: 'Failed to fetch article',
       message: error.message 
     });
+  }
+});
+
+// ============================================================================
+// NEW COMMENTARY ENDPOINTS - Queue-based AI Generation
+// ============================================================================
+
+const { addToQueue, getQueueStats } = require('../workers/commentaryQueue');
+const cacheService = require('../services/cache');
+
+// POST /api/articles/:id/generate-commentary - Queue article for AI commentary
+router.post('/:id/generate-commentary', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const Article = require('../models/article');
+    
+    // 1. Find the article
+    const article = await findArticleByIdentifier(id);
+    if (!article) {
+      return res.status(404).json({ 
+        status: 'error',
+        message: 'Article not found'
+      });
+    }
+
+    // 2. Check if commentary already exists in DB
+    if (article.aiCommentary) {
+      return res.json({ 
+        status: 'success',
+        commentary: article.aiCommentary,
+        source: 'database',
+        generatedAt: article.commentaryGeneratedAt
+      });
+    }
+
+    // 3. Check cache
+    const cacheKey = `commentary:${article._id}`;
+    const cached = await cacheService.get(cacheKey);
+    if (cached) {
+      // Update DB with cached commentary
+      await Article.findByIdAndUpdate(article._id, { 
+        aiCommentary: cached,
+        commentaryGeneratedAt: new Date()
+      });
+      
+      return res.json({ 
+        status: 'success',
+        commentary: cached,
+        source: 'cache'
+      });
+    }
+
+    // 4. Add to queue for background processing (HIGH PRIORITY - user triggered)
+    const job = await addToQueue(article, { priority: 1 });
+    
+    if (job) {
+      res.status(202).json({ 
+        status: 'queued',
+        message: 'AI is generating commentary in the background.',
+        articleId: article._id,
+        jobId: job.id,
+        estimatedWaitTime: '10-30 seconds'
+      });
+    } else {
+      res.json({ 
+        status: 'success',
+        message: 'Commentary already exists or is being processed'
+      });
+    }
+
+  } catch (error) {
+    console.error('Commentary generation error:', error);
+    res.status(500).json({ 
+      status: 'error',
+      message: error.message 
+    });
+  }
+});
+
+// GET /api/articles/:id/commentary-status - Poll for commentary status
+router.get('/:id/commentary-status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const article = await findArticleByIdentifier(id);
+    if (!article) {
+      return res.status(404).json({ 
+        ready: false,
+        message: 'Article not found'
+      });
+    }
+
+    res.json({
+      ready: !!article.aiCommentary,
+      commentary: article.aiCommentary,
+      generatedAt: article.commentaryGeneratedAt,
+      source: article.commentarySource || 'ai'
+    });
+
+  } catch (error) {
+    res.status(500).json({ 
+      ready: false,
+      error: error.message 
+    });
+  }
+});
+
+// GET /api/articles/queue/stats - Get commentary queue statistics
+router.get('/queue/stats', async (req, res) => {
+  try {
+    const stats = await getQueueStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 

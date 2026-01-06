@@ -54,6 +54,10 @@ const ArticleSchema = new mongoose.Schema({
   per_facet: [String],
   geo_facet: [String],
   content: String,
+  aiCommentary: {
+    type: String,
+    trim: true
+  },
   createdAt: {
     type: Date,
     default: Date.now

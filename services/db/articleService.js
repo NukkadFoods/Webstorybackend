@@ -127,7 +127,7 @@ const saveArticles = async (articles) => {
  * Get articles by section
  * @param {string} section - Section name
  * @param {number} limit - Maximum number of articles to return
- * @returns {Promise<Array<Object>>} Articles in the section
+ * @returns {Promise<Array<Object>>} Articles in the section WITH commentary
  */
 const getArticlesBySection = async (section, limit = 10) => {
   try {
@@ -136,7 +136,11 @@ const getArticlesBySection = async (section, limit = 10) => {
       await connectToMongoDB();
     }
     
-    const articles = await Article.find({ section })
+    // ONLY return articles WITH commentary
+    const articles = await Article.find({ 
+      section,
+      aiCommentary: { $exists: true, $ne: null, $ne: '' }
+    })
       .sort({ publishedDate: -1 })
       .limit(limit);
     
