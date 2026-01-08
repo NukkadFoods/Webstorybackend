@@ -214,7 +214,6 @@ $RECYCLE.BIN/
 temp/
 tmp/
 *.tmp
-cache/
 *.cache
 
 # Build artifacts
