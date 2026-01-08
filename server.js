@@ -11,6 +11,7 @@ const RedisRefreshService = require('./services/redisRefreshService');
 const groqLoadBalancer = require('./services/groqLoadBalancer');
 const newsdataLoadBalancer = require('./services/newsdataLoadBalancer');
 const sectionRotationWorker = require('./workers/sectionRotationWorker');
+const http = require('http');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -99,6 +100,14 @@ app.options('*', (req, res) => {
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
   res.header('Access-Control-Allow-Credentials', 'true');
   res.status(200).send();
+});
+
+// 💚 Lightweight health check endpoint (for keeping Render deployment alive)
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Cache-Control headers for CDN/Edge caching
@@ -558,6 +567,44 @@ dbConnectionPromise
     // Start section rotation worker (generates commentary for 1 article per section every 5 min)
     console.log('🔄 Starting Section Rotation Worker...');
     sectionRotationWorker.start();
+    
+    // Start keep-alive pinger for Render deployment (prevents auto-sleep after 15 min of inactivity)
+    console.log('💚 Starting Render Keep-Alive Service (pings /health every 12 minutes)...');
+    const startKeepAliveService = () => {
+      const keepAliveInterval = setInterval(() => {
+        const options = {
+          hostname: 'localhost',
+          port: port,
+          path: '/health',
+          method: 'GET',
+          timeout: 5000
+        };
+        
+        const req = http.request(options, (res) => {
+          if (res.statusCode === 200) {
+            console.log(`💚 Keep-alive ping successful (${new Date().toISOString()})`);
+          }
+        });
+        
+        req.on('error', (error) => {
+          console.warn(`⚠️ Keep-alive ping failed: ${error.message}`);
+        });
+        
+        req.on('timeout', () => {
+          console.warn('⚠️ Keep-alive ping timeout');
+          req.destroy();
+        });
+        
+        req.end();
+      }, 12 * 60 * 1000); // 12 minutes
+      
+      return keepAliveInterval;
+    };
+    
+    // Only start keep-alive on Render (not on local dev)
+    if (process.env.RENDER) {
+      startKeepAliveService();
+    }
     
     // Start background fill-threshold worker if running on Render (not Vercel serverless)
     if (process.env.NODE_ENV === 'production' && process.env.RENDER) {
