@@ -89,7 +89,9 @@ async function fillThresholdWorker() {
         // Process one NYT section
         if (i < nytNeeded.length) {
           const { section, needed, current } = nytNeeded[i];
-          const articlesToFetch = current < 3 ? 5 : 2;
+          // Fetch MORE articles to increase chances of finding fresh content
+          // Instead of 2-5, fetch 15-20 to get better variety
+          const articlesToFetch = current < 3 ? 20 : 15;
           console.log(`\n🔵 [NYT] Processing section: ${section.toUpperCase()} (need ${needed} articles, fetching ${articlesToFetch})`);
           
           try {
@@ -115,7 +117,8 @@ async function fillThresholdWorker() {
         // Process one newsdata.io section
         if (i < newsdataNeeded.length) {
           const { section, needed, current } = newsdataNeeded[i];
-          const articlesToFetch = current < 3 ? 5 : 2;
+          // Fetch MORE articles to increase chances of finding fresh content
+          const articlesToFetch = current < 3 ? 20 : 15;
           console.log(`\n🟢 [newsdata.io] Processing section: ${section.toUpperCase()} (need ${needed} articles, fetching ${articlesToFetch})`);
           
           try {

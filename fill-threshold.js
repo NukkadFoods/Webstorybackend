@@ -101,15 +101,16 @@ async function fillThreshold() {
       // Process one NYT section
       if (i < nytNeeded.length) {
         const { section, needed, current } = nytNeeded[i];
-        // Fetch more articles if section has very few (increases chance of new content)
-        const articlesToFetch = current < 3 ? 5 : 2;
+        // Fetch MORE articles to increase chances of finding fresh content
+        // Instead of 2-5, fetch 15-20 to get better variety
+        const articlesToFetch = current < 3 ? 20 : 15;
         console.log(`\n🔵 [NYT] Processing section: ${section.toUpperCase()} (need ${needed} articles, fetching ${articlesToFetch})`);
         
         try {
           const result = await articleFetcherService.fetchAndProcessSection(section, articlesToFetch);
           
-          if (result && result.processedCount > 0) {
-            console.log(`✅ Added ${result.processedCount} article(s) to ${section}`);
+          if (result && result > 0) {
+            console.log(`✅ Added ${result} article(s) to ${section}`);
           } else {
             console.log(`⏭️  No new articles added to ${section} (duplicates or no content)`);
           }
@@ -129,15 +130,15 @@ async function fillThreshold() {
       // Process one newsdata.io section
       if (i < newsdataNeeded.length) {
         const { section, needed, current } = newsdataNeeded[i];
-        // Fetch more articles if section has very few (increases chance of new content)
-        const articlesToFetch = current < 3 ? 5 : 2;
+        // Fetch MORE articles to increase chances of finding fresh content
+        const articlesToFetch = current < 3 ? 20 : 15;
         console.log(`\n🟢 [newsdata.io] Processing section: ${section.toUpperCase()} (need ${needed} articles, fetching ${articlesToFetch})`);
         
         try {
           const result = await articleFetcherService.fetchAndProcessSection(section, articlesToFetch);
           
-          if (result && result.processedCount > 0) {
-            console.log(`✅ Added ${result.processedCount} article(s) to ${section}`);
+          if (result && result > 0) {
+            console.log(`✅ Added ${result} article(s) to ${section}`);
           } else {
             console.log(`⏭️  No new articles added to ${section} (duplicates or no content)`);
           }
