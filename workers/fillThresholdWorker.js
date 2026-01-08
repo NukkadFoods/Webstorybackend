@@ -1,6 +1,7 @@
 /**
- * Fill Threshold Worker
- * Background process that continuously fills article threshold
+ * Fill Threshold Worker - Section Rotation
+ * Background process that rotates through all 9 sections
+ * Processes one section every 3 minutes to keep articles fresh
  * Runs alongside the API server on Render
  */
 
@@ -12,13 +13,16 @@ const THRESHOLD = 8;
 const SECTIONS = ['world', 'us', 'politics', 'business', 'technology', 'health', 'sports', 'entertainment', 'finance'];
 const MAX_RETRIES = 5;
 const RETRY_DELAY = 10000; // 10 seconds
+const SECTION_ROTATION_INTERVAL = 3 * 60 * 1000; // 3 minutes in milliseconds
 
 async function fillThresholdWorker() {
   console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║     🚀 Background Fill-Threshold Worker Started           ║');
-  console.log('║     Running alongside API server on Render                ║');
+  console.log('║     🚀 Background Article Rotation Worker Started         ║');
+  console.log('║     Rotates through all 9 sections every 3 minutes        ║');
+  console.log('║     Processes 15-20 articles per section for freshness    ║');
   console.log('╚════════════════════════════════════════════════════════════╝\n');
   
+  let currentSectionIndex = 0;
   let iteration = 1;
   let retries = 0;
   
@@ -30,119 +34,59 @@ async function fillThresholdWorker() {
       // Check current status
       const status = await thresholdService.checkThreshold();
       
-      if (status.thresholdMet) {
-        console.log('✅ Threshold met for all sections!');
-        thresholdService.displayStatus();
-        console.log('🔄 Will continue refreshing articles every 30 seconds...\n');
-        
-        // Continue refreshing even after threshold
-        await new Promise(resolve => setTimeout(resolve, 30000));
-        iteration++;
-        continue;
+      console.log('📊 Current Threshold Status:');
+      status.sections.forEach(s => {
+        const icon = s.met ? '✅' : '📊';
+        console.log(`   ${icon} ${s.section}: ${s.count}/8`);
+      });
+      
+      if (!status.thresholdMet) {
+        console.log('\n⏳ Threshold not yet met. Filling missing sections...');
+      } else {
+        console.log('\n✅ Threshold already met! Rotating through sections for freshness...');
       }
       
-      // Find sections that need articles
-      const sectionsNeedingArticles = [];
-      for (const section of SECTIONS) {
-        const count = await Article.countDocuments({ 
-          section,
-          aiCommentary: { $exists: true, $ne: null, $ne: '' }
-        });
+      // Rotate through all sections (one every 3 minutes)
+      const section = SECTIONS[currentSectionIndex];
+      console.log(`\n🔄 [${currentSectionIndex + 1}/9] Processing section: ${section.toUpperCase()}`);
+      
+      try {
+        // Fetch 15-20 articles per section to ensure freshness
+        const articlesToFetch = 15;
+        console.log(`🔵 Fetching ${articlesToFetch} articles for ${section}...`);
         
-        if (count < THRESHOLD) {
-          const needed = THRESHOLD - count;
-          sectionsNeedingArticles.push({ section, current: count, needed });
-          console.log(`📊 ${section}: ${count}/8 (need ${needed} more)`);
+        const result = await articleFetcherService.fetchAndProcessSection(section, articlesToFetch);
+        
+        if (result && result > 0) {
+          console.log(`✅ Added ${result} fresh article(s) to ${section}`);
         } else {
-          console.log(`✅ ${section}: ${count}/8 (threshold met)`);
-        }
-      }
-      
-      if (sectionsNeedingArticles.length === 0) {
-        console.log('\n✅ All sections meet threshold!');
-        console.log('🔄 Will continue refreshing every 30 seconds...\n');
-        await new Promise(resolve => setTimeout(resolve, 30000));
-        iteration++;
-        continue;
-      }
-      
-      // Sort by current count (ascending) - prioritize sections with fewest articles
-      sectionsNeedingArticles.sort((a, b) => a.current - b.current);
-      
-      console.log(`\n🎯 Priority order (fewest articles first):`);
-      sectionsNeedingArticles.forEach(s => console.log(`   ${s.section}: ${s.current}/8`));
-      
-      // Separate NYT and newsdata.io sections
-      const nytSections = ['world', 'us', 'politics', 'business', 'technology', 'health'];
-      const newsdataSections = ['entertainment', 'finance', 'sports'];
-      
-      const nytNeeded = sectionsNeedingArticles.filter(s => nytSections.includes(s.section));
-      const newsdataNeeded = sectionsNeedingArticles.filter(s => newsdataSections.includes(s.section));
-      
-      console.log(`\n🎯 NYT sections needing articles: ${nytNeeded.length}`);
-      console.log(`🎯 newsdata.io sections needing articles: ${newsdataNeeded.length}`);
-      
-      // Alternate between NYT and newsdata.io to avoid rate limits
-      const maxIterations = Math.max(nytNeeded.length, newsdataNeeded.length);
-      
-      for (let i = 0; i < maxIterations; i++) {
-        // Process one NYT section
-        if (i < nytNeeded.length) {
-          const { section, needed, current } = nytNeeded[i];
-          // Fetch MORE articles to increase chances of finding fresh content
-          // Instead of 2-5, fetch 15-20 to get better variety
-          const articlesToFetch = current < 3 ? 20 : 15;
-          console.log(`\n🔵 [NYT] Processing section: ${section.toUpperCase()} (need ${needed} articles, fetching ${articlesToFetch})`);
-          
-          try {
-            const result = await articleFetcherService.fetchAndProcessSection(section, articlesToFetch);
-            
-            if (result && result > 0) {
-              console.log(`✅ Added ${result} article(s) to ${section}`);
-            } else {
-              console.log(`⏭️  No new articles added to ${section} (duplicates or no content)`);
-            }
-            
-            // Delay for NYT to avoid rate limits (10 seconds)
-            await new Promise(resolve => setTimeout(resolve, 10000));
-          } catch (error) {
-            console.error(`❌ Error processing ${section}:`, error.message);
-            if (error.message.includes('429')) {
-              console.log('⏸️  Rate limited. Waiting 30 seconds...');
-              await new Promise(resolve => setTimeout(resolve, 30000));
-            }
-          }
+          console.log(`ℹ️  No new articles to add to ${section} (all duplicates or limit reached)`);
         }
         
-        // Process one newsdata.io section
-        if (i < newsdataNeeded.length) {
-          const { section, needed, current } = newsdataNeeded[i];
-          // Fetch MORE articles to increase chances of finding fresh content
-          const articlesToFetch = current < 3 ? 20 : 15;
-          console.log(`\n🟢 [newsdata.io] Processing section: ${section.toUpperCase()} (need ${needed} articles, fetching ${articlesToFetch})`);
-          
-          try {
-            const result = await articleFetcherService.fetchAndProcessSection(section, articlesToFetch);
-            
-            if (result && result > 0) {
-              console.log(`✅ Added ${result} article(s) to ${section}`);
-            } else {
-              console.log(`⏭️  No new articles added to ${section} (duplicates or no content)`);
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 3000));
-          } catch (error) {
-            console.error(`❌ Error processing ${section}:`, error.message);
-          }
+        retries = 0; // Reset retries on successful iteration
+        
+      } catch (error) {
+        console.error(`❌ Error processing ${section}:`, error.message);
+        if (error.message.includes('429')) {
+          console.log('⏸️  Rate limited. Waiting 30 seconds...');
+          await new Promise(resolve => setTimeout(resolve, 30000));
         }
+      }
+      
+      // Move to next section
+      currentSectionIndex = (currentSectionIndex + 1) % SECTIONS.length;
+      
+      // Log when completing a full rotation
+      if (currentSectionIndex === 0) {
+        console.log('\n🔁 ✅ Completed full rotation through all 9 sections!');
+        console.log('   Starting new rotation...');
       }
       
       iteration++;
       
-      // Delay between iterations
-      console.log('\n⏳ Waiting 10 seconds before next iteration...');
-      await new Promise(resolve => setTimeout(resolve, 10000));
-      retries = 0; // Reset retries on successful iteration
+      // Wait 3 minutes (180 seconds) before processing next section
+      console.log(`\n⏳ Waiting 3 minutes before next section (${SECTIONS[currentSectionIndex].toUpperCase()})...`);
+      await new Promise(resolve => setTimeout(resolve, SECTION_ROTATION_INTERVAL));
       
     } catch (iterationError) {
       console.error(`❌ Error in iteration ${iteration}:`, iterationError.message);
