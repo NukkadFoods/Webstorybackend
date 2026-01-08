@@ -259,6 +259,85 @@ class CacheService {
   }
 
   /**
+   * 🔄 FIFO Cache Management for Sections
+   * When new articles are added, remove the OLDEST articles (FIFO - First In First Out)
+   * Keeps newest articles visible, oldest removed to prevent cache crowding
+   * @param {string} section - Section name
+   * @param {Array<string>} newArticleIds - New article IDs to add
+   * @param {number} maxArticles - Maximum articles to keep per section (default 20)
+   * @returns {Promise<Object>} {added, removed} counts
+   */
+  async manageSectionCacheFIFO(section, newArticleIds, maxArticles = 20) {
+    try {
+      if (!Array.isArray(newArticleIds) || newArticleIds.length === 0) {
+        return { added: 0, removed: 0 };
+      }
+
+      const sectionKey = `section:${section}:articles`;
+      
+      // Get current articles in the section cache
+      const currentIds = await redis.lrange(sectionKey, 0, -1);
+      
+      // Add new articles to the END (using RPUSH - right push)
+      // This maintains insertion order: oldest on left, newest on right
+      await redis.rpush(sectionKey, ...newArticleIds);
+      
+      // Get total count after adding
+      const totalCount = await redis.llen(sectionKey);
+      
+      let removed = 0;
+
+      // If we exceed maxArticles, remove from the LEFT (FIFO - oldest first)
+      if (totalCount > maxArticles) {
+        const toRemove = totalCount - maxArticles;
+        
+        // LRANGE to get the IDs we're about to remove (for cleanup)
+        const oldestIds = await redis.lrange(sectionKey, 0, toRemove - 1);
+        
+        // Remove the oldest articles from the list
+        await redis.ltrim(sectionKey, toRemove, -1);
+        
+        // Also remove individual article caches for the oldest articles
+        for (const articleId of oldestIds) {
+          const articleKey = `article:${articleId}`;
+          await redis.del(articleKey);
+          removed++;
+        }
+        
+        console.log(`🗑️ [${section}] FIFO: Added ${newArticleIds.length}, Removed ${removed} oldest articles (cache limited to ${maxArticles})`);
+      } else {
+        console.log(`✅ [${section}] FIFO: Added ${newArticleIds.length} articles (total: ${totalCount}/${maxArticles})`);
+      }
+
+      return { added: newArticleIds.length, removed };
+    } catch (error) {
+      console.error(`❌ FIFO cache management error for section "${section}":`, error.message);
+      return { added: 0, removed: 0 };
+    }
+  }
+
+  /**
+   * Get articles from section cache (FIFO order - oldest to newest)
+   * @param {string} section - Section name
+   * @param {number} count - Number of articles to retrieve (default 20)
+   * @returns {Promise<Array<string>>} Article IDs in cache order
+   */
+  async getSectionArticles(section, count = 20) {
+    try {
+      // Get newest articles from the right side of the list
+      // Since RPUSH adds to right, newest articles are at the end
+      // We retrieve from the end to show newest first
+      const sectionKey = `section:${section}:articles`;
+      const ids = await redis.lrange(sectionKey, -count, -1);
+      // Reverse to get newest first
+      return ids.reverse();
+    } catch (error) {
+      console.error(`❌ Error getting section articles for "${section}":`, error.message);
+      return [];
+    }
+  }
+
+  /**
    * Get article IDs from "Top 20" list
    * @param {string} listKey - Redis list key
    * @param {number} start - Start index (default 0)

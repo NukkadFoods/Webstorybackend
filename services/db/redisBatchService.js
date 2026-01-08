@@ -129,9 +129,9 @@ class RedisBatchService {
       }
 
       let updated = 0;
-      let removed = 0;
 
-      // 2. Update fresh articles in Redis
+      // 2. Cache individual articles in Redis
+      const articleIds = [];
       for (const article of freshArticles) {
         const cacheKey = `article:${article.id || article._id}`;
         
@@ -142,31 +142,13 @@ class RedisBatchService {
           await CacheService.set(cacheKey, JSON.stringify(article), 1800); // 30 min TTL
           updated++;
         }
+        
+        articleIds.push(article.id || article._id.toString());
       }
 
-      // 3. Update section list in Redis
-      const sectionKey = `section:${section}:fresh`;
-      const articleIds = freshArticles.map(a => a.id || a._id.toString());
-      await CacheService.set(sectionKey, JSON.stringify(articleIds), 900); // 15 min TTL
-
-      // 4. Remove stale articles (older than 7 days)
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-      const staleArticles = await Article.find({
-        section,
-        createdAt: { $lt: sevenDaysAgo }
-      }).select('id _id');
-
-      for (const article of staleArticles) {
-        const cacheKey = `article:${article.id || article._id}`;
-        const deleted = await CacheService.del(cacheKey);
-        if (deleted) removed++;
-      }
-
-      if (updated > 0 || removed > 0) {
-        console.log(`✅ [${section}] Updated: ${updated}, Removed: ${removed}`);
-      }
+      // 3. Use FIFO cache management for the section
+      // When adding new articles, oldest articles are automatically removed to prevent crowding
+      const { added, removed } = await CacheService.manageSectionCacheFIFO(section, articleIds, 20);
 
       return { updated, removed };
 

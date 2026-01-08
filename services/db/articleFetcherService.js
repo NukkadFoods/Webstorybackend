@@ -140,9 +140,26 @@ class ArticleFetcherService {
 
       console.log(`✅ [${section}] Processed ${processedCount}/${articlesToProcess} complete articles`);
       
-      // Clear section cache to force refresh
-      const sectionArticleService = require('./sectionArticleService');
-      await sectionArticleService.clearSectionCache(section);
+      // 7. Update section cache with FIFO strategy (newest articles at front, oldest removed)
+      if (processedCount > 0) {
+        const sectionArticleService = require('./sectionArticleService');
+        await sectionArticleService.clearSectionCache(section); // Clear pagination cache
+        
+        // Get newly added articles for this section
+        const newArticles = await Article.find({
+          section: section,
+          aiCommentary: { $exists: true, $ne: null, $ne: '' }
+        })
+        .sort({ createdAt: -1 })
+        .limit(processedCount)
+        .lean();
+        
+        if (newArticles.length > 0) {
+          const articleIds = newArticles.map(a => a.id || a._id.toString());
+          const { added, removed } = await CacheService.manageSectionCacheFIFO(section, articleIds, 20);
+          console.log(`📋 Updated section cache (FIFO): Added ${added}, Removed ${removed} old articles`);
+        }
+      }
 
       return processedCount;
 
