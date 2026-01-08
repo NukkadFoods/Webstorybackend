@@ -5,13 +5,6 @@ const cors = require('cors');
 const compression = require('compression');
 const { Groq } = require('groq-sdk');
 const { connectToMongoDB } = require('./config/database');
-
-// Debug: Log the current directory and services path
-console.log('📍 Current directory:', __dirname);
-console.log('📍 Services path exists:', require('fs').existsSync(path.join(__dirname, 'services')));
-console.log('📍 Cache path exists:', require('fs').existsSync(path.join(__dirname, 'services/cache')));
-console.log('📍 Cache index exists:', require('fs').existsSync(path.join(__dirname, 'services/cache/index.js')));
-
 const CacheService = require('./services/cache');
 const CronService = require('./services/cronService');
 const RedisRefreshService = require('./services/redisRefreshService');
