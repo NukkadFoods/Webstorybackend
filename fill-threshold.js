@@ -5,26 +5,52 @@ const thresholdService = require('./services/db/thresholdService');
 
 const THRESHOLD = 8;
 const SECTIONS = ['world', 'us', 'politics', 'business', 'technology', 'health', 'sports', 'entertainment', 'finance'];
+const MAX_RETRIES = 5;
+const RETRY_DELAY = 10000; // 10 seconds
 
 async function fillThreshold() {
   console.log('🚀 Starting threshold fill process...\n');
+  console.log(`📝 Mode: Continuous background worker on Render`);
+  console.log(`⏱️  Will keep running and filling articles until threshold is met\n`);
   
-  await connectToMongoDB();
+  let retries = 0;
+  let connected = false;
+  
+  // Connect to MongoDB with retry logic
+  while (!connected && retries < MAX_RETRIES) {
+    try {
+      await connectToMongoDB();
+      connected = true;
+      console.log('✅ MongoDB connected successfully\n');
+    } catch (error) {
+      retries++;
+      console.error(`❌ MongoDB connection failed (attempt ${retries}/${MAX_RETRIES}):`, error.message);
+      if (retries < MAX_RETRIES) {
+        console.log(`⏳ Retrying in ${RETRY_DELAY / 1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      } else {
+        console.error('❌ Failed to connect to MongoDB after max retries. Exiting.');
+        process.exit(1);
+      }
+    }
+  }
   
   let iteration = 1;
   
   while (true) {
-    console.log(`\n🔄 Iteration ${iteration}`);
-    console.log('━'.repeat(60));
-    
-    // Check current status
-    const status = await thresholdService.checkThreshold();
-    
-    if (status.isThresholdMet) {
-      console.log('\n✅ THRESHOLD MET! All sections have 8+ articles');
-      thresholdService.displayStatus();
-      process.exit(0);
-    }
+    try {
+      console.log(`\n🔄 Iteration ${iteration}`);
+      console.log('━'.repeat(60));
+      
+      // Check current status
+      const status = await thresholdService.checkThreshold();
+      
+      if (status.isThresholdMet) {
+        console.log('\n✅ THRESHOLD MET! All sections have 8+ articles');
+        thresholdService.displayStatus();
+        console.log('🎉 Background worker will continue running and refreshing articles...\n');
+        // Keep running to refresh articles even after threshold
+      }
     
     // Find sections that need articles
     const sectionsNeedingArticles = [];
@@ -44,8 +70,12 @@ async function fillThreshold() {
     }
     
     if (sectionsNeedingArticles.length === 0) {
-      console.log('\n✅ All sections meet threshold!');
-      break;
+      console.log('\n✅ All sections meet threshold! Refreshing articles for freshness...');
+      // Continue refreshing even after threshold
+      console.log('⏳ Waiting 30 seconds before next refresh cycle...');
+      await new Promise(resolve => setTimeout(resolve, 30000));
+      iteration++;
+      continue;
     }
     
     // Sort by current count (ascending) - prioritize sections with fewest articles
@@ -125,14 +155,19 @@ async function fillThreshold() {
     // Delay between iterations
     console.log('\n⏳ Waiting 10 seconds before next iteration...');
     await new Promise(resolve => setTimeout(resolve, 10000));
+    
+    } catch (iterationError) {
+      console.error(`❌ Error in iteration ${iteration}:`, iterationError.message);
+      console.log('⏳ Recovering... waiting 30 seconds before retry');
+      await new Promise(resolve => setTimeout(resolve, 30000));
+      iteration++;
+      continue;
+    }
   }
-  
-  console.log('\n✅ Threshold fill complete!');
-  thresholdService.displayStatus();
-  process.exit(0);
 }
 
 fillThreshold().catch(error => {
-  console.error('❌ Fatal error:', error);
+  console.error('❌ Fatal error in background worker:', error);
+  console.log('🔄 Process will be automatically restarted by Render...');
   process.exit(1);
 });

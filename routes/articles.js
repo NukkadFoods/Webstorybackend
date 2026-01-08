@@ -40,8 +40,13 @@ const fetchFromNYT = async (endpoint) => {
 const normalizeArticleFormat = (article) => {
   const articleObj = article.toObject ? article.toObject() : { ...article };
   
-  // Ensure id field exists
-  if (!articleObj.id && articleObj._id) {
+  // Ensure id field exists - use URL as the primary ID for consistent frontend routing
+  // URLs are unique and work better than NYT URIs or MongoDB _ids for browser navigation
+  if (articleObj.url) {
+    articleObj.id = articleObj.url;
+  } else if (articleObj.uri) {
+    articleObj.id = articleObj.uri;
+  } else if (articleObj._id) {
     articleObj.id = articleObj._id.toString();
   }
   

@@ -225,7 +225,119 @@ app.post('/api/cron/newsletter', async (req, res) => {
     });
   }
 });
+// ✨ Vercel Cron endpoint for section rotation (GET)
+app.get('/api/cron/rotate-sections', async (req, res) => {
+  try {
+    console.log('🔄 Vercel cron job triggered for section rotation (GET)');
+    
+    // Verify this is a cron request from Vercel
+    const userAgent = req.headers['user-agent'] || '';
+    if (!userAgent.includes('vercel-cron') && !userAgent.includes('curl')) {
+      console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
+    }
+    
+    const sectionRotationWorker = require('./workers/sectionRotationWorker');
+    
+    // Process next section in rotation
+    await sectionRotationWorker.processNextSection();
+    
+    const status = sectionRotationWorker.getStatus();
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Section rotation cron job executed successfully',
+      currentSection: status.currentSection,
+      progress: `${status.currentIndex + 1}/${status.totalSections}`,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Section rotation cron job failed:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Section rotation cron job failed',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 
+// 📝 Vercel Cron endpoint for fill-threshold (GET)
+app.get('/api/cron/fill-threshold', async (req, res) => {
+  try {
+    console.log('📝 Vercel cron job triggered for fill-threshold (GET)');
+    
+    // Verify this is a cron request from Vercel
+    const userAgent = req.headers['user-agent'] || '';
+    if (!userAgent.includes('vercel-cron') && !userAgent.includes('curl')) {
+      console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
+    }
+    
+    const articleFetcherService = require('./services/db/articleFetcherService');
+    const thresholdService = require('./services/db/thresholdService');
+    
+    // Check current threshold status
+    const status = await thresholdService.checkThreshold();
+    
+    if (status.thresholdMet) {
+      return res.status(200).json({
+        success: true,
+        message: 'Threshold already met - all sections have enough articles',
+        thresholdMet: true,
+        total: status.total,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Get sections needing articles (prioritize sections with fewest)
+    const sectionsNeedingArticles = status.sections
+      .filter(s => !s.met)
+      .sort((a, b) => a.count - b.count);
+    
+    if (sectionsNeedingArticles.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'Threshold met',
+        thresholdMet: true,
+        total: status.total,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Process the section with fewest articles (process 2 articles per cron)
+    const sectionToProcess = sectionsNeedingArticles[0].section;
+    console.log(`🎯 Processing section with lowest count: ${sectionToProcess}`);
+    
+    const processedCount = await articleFetcherService.fetchAndProcessSection(sectionToProcess, 2);
+    
+    // Get updated status
+    const updatedStatus = await thresholdService.checkThreshold();
+    
+    return res.status(200).json({
+      success: true,
+      message: 'Fill-threshold cron job executed successfully',
+      processedArticles: processedCount,
+      sectionProcessed: sectionToProcess,
+      thresholdProgress: {
+        total: updatedStatus.total,
+        needed: 72 - updatedStatus.total,
+        percentComplete: Math.round((updatedStatus.total / 72) * 100)
+      },
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ Fill-threshold cron job failed:', error);
+    
+    return res.status(500).json({
+      success: false,
+      message: 'Fill-threshold cron job failed',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 app.use('/api', commentaryRoutes);
 
 // � Load Balancer Status Endpoint
@@ -446,6 +558,25 @@ dbConnectionPromise
     // Start section rotation worker (generates commentary for 1 article per section every 5 min)
     console.log('🔄 Starting Section Rotation Worker...');
     sectionRotationWorker.start();
+    
+    // Start background fill-threshold worker if running on Render (not Vercel serverless)
+    if (process.env.NODE_ENV === 'production' && process.env.RENDER) {
+      console.log('🚀 Starting Background Fill-Threshold Worker (Render environment detected)...');
+      const startBackgroundWorker = async () => {
+        try {
+          // Import the fill-threshold logic as a module
+          const { fillThresholdWorker } = require('./workers/fillThresholdWorker');
+          // Run in background without blocking server startup
+          fillThresholdWorker().catch(error => {
+            console.error('❌ Background worker error:', error);
+          });
+        } catch (error) {
+          console.warn('⚠️ Could not start background worker:', error.message);
+        }
+      };
+      // Start worker after a short delay to let server start first
+      setTimeout(startBackgroundWorker, 3000);
+    }
     
     // Only start server if not in Vercel environment
     if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
