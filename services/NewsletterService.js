@@ -13,6 +13,15 @@ class NewsletterService {
       }
     });
     
+    // Verify connection configuration
+    this.transporter.verify((error, success) => {
+      if (error) {
+        console.error('❌ Email transporter error:', error);
+      } else if (success) {
+        console.log('✅ Email transporter is ready to send emails');
+      }
+    });
+    
     // Domain-specific reporters
     this.aiReporters = [
       { name: 'James Wilson', title: 'Senior Political Reporter', location: 'Forexyy Newsletter, Washington DC', section: 'politics', expertise: 'Congressional Affairs & Federal Policy' },
@@ -319,8 +328,18 @@ class NewsletterService {
       };
 
       // Send email
-      const info = await this.transporter.sendMail(mailOptions);
-      console.log(`✅ Newsletter sent to ${subscriber.email}:`, info.messageId);
+      let info;
+      try {
+        info = await this.transporter.sendMail(mailOptions);
+        console.log(`✅ Newsletter sent to ${subscriber.email}:`, info.messageId);
+      } catch (sendError) {
+        console.error(`❌ SMTP Error for ${subscriber.email}:`, {
+          message: sendError.message,
+          code: sendError.code,
+          response: sendError.response
+        });
+        throw sendError;
+      }
       
       // Update subscriber's sent articles list and newsletter history
       try {
