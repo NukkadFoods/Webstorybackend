@@ -23,35 +23,35 @@ class RedisRefreshService {
    */
   async refreshCache() {
     if (this.isRefreshing) {
-      console.log('⏭️  Redis refresh already in progress, skipping...');
+      // console.log('⏭️  Redis refresh already in progress, skipping...');
       return { skipped: true };
     }
 
     try {
       this.isRefreshing = true;
       const startTime = Date.now();
-      
-      console.log('\n🔄 Starting Redis LIFO refresh from MongoDB...');
-      
+
+      // console.log('\n🔄 Starting Redis LIFO refresh from MongoDB...');
+
       // Fetch latest articles with commentary (LIFO - newest first)
-      const articles = await Article.find({ 
+      const articles = await Article.find({
         aiCommentary: { $exists: true, $ne: null }
       })
         .sort({ publishedDate: -1 }) // Newest first (LIFO)
         .limit(this.batchSize)
         .select('_id title headline abstract url imageUrl byline section publishedDate aiCommentary')
         .lean();
-      
+
       if (!articles || articles.length === 0) {
-        console.log('⚠️  No articles with commentary found in MongoDB');
+        // console.log('⚠️  No articles with commentary found in MongoDB');
         return { success: false, message: 'No articles found' };
       }
-      
-      console.log(`📦 Found ${articles.length} articles to cache`);
-      
+
+      // console.log(`📦 Found ${articles.length} articles to cache`);
+
       let cached = 0;
       let failed = 0;
-      
+
       // Cache each article to Redis with 30min TTL
       for (const article of articles) {
         try {
@@ -70,23 +70,23 @@ class RedisRefreshService {
             _cachedAt: new Date(),
             _commentarySource: 'database-refresh'
           };
-          
+
           await CacheService.set(cacheKey, JSON.stringify(cacheData), 1800); // 30 min TTL
           cached++;
-          
+
           // Log first few to show progress
           if (cached <= 3) {
-            console.log(`  ✅ Cached: ${article.title.substring(0, 50)}...`);
+            // console.log(`  ✅ Cached: ${article.title.substring(0, 50)}...`);
           }
         } catch (err) {
           failed++;
           console.error(`  ❌ Failed to cache article ${article._id}:`, err.message);
         }
       }
-      
+
       const duration = Date.now() - startTime;
       this.lastRefresh = new Date();
-      
+
       const stats = {
         success: true,
         cached,
@@ -95,16 +95,16 @@ class RedisRefreshService {
         duration: `${duration}ms`,
         timestamp: this.lastRefresh
       };
-      
-      console.log(`✅ Redis refresh complete: ${cached} cached, ${failed} failed in ${duration}ms`);
-      console.log(`📊 Next refresh scheduled for 30 minutes from now\n`);
-      
+
+      // console.log(`✅ Redis refresh complete: ${cached} cached, ${failed} failed in ${duration}ms`);
+      // console.log(`📊 Next refresh scheduled for 30 minutes from now\n`);
+
       return stats;
-      
+
     } catch (error) {
       console.error('❌ Redis refresh failed:', error);
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: error.message,
         timestamp: new Date()
       };
@@ -117,11 +117,11 @@ class RedisRefreshService {
    * Start automatic refresh every 30 minutes
    */
   startAutoRefresh() {
-    console.log('🚀 Starting Redis auto-refresh (every 30 minutes, LIFO order)...');
-    
+    // console.log('🚀 Starting Redis auto-refresh (every 30 minutes, LIFO order)...');
+
     // Run immediately on startup
     this.refreshCache();
-    
+
     // Then run every 30 minutes
     setInterval(() => {
       this.refreshCache();
@@ -136,7 +136,7 @@ class RedisRefreshService {
       isRefreshing: this.isRefreshing,
       lastRefresh: this.lastRefresh,
       batchSize: this.batchSize,
-      nextRefresh: this.lastRefresh 
+      nextRefresh: this.lastRefresh
         ? new Date(this.lastRefresh.getTime() + 30 * 60 * 1000)
         : null
     };

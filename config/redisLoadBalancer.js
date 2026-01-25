@@ -22,8 +22,8 @@ class RedisLoadBalancer {
 
         // Check if Redis is disabled for local development
         if (process.env.REDIS_DISABLED === 'true') {
-            console.log('🔌 Redis DISABLED - using Mock Redis (in-memory)');
-            console.log('   Set REDIS_DISABLED=false when Upstash limits reset');
+            // console.log('🔌 Redis DISABLED - using Mock Redis (in-memory)');
+            // console.log('   Set REDIS_DISABLED=false when Upstash limits reset');
             this.connections.push(new MockRedis());
             this.connectionStats.push({ requests: 0, errors: 0, name: 'mock', healthy: true });
             this.isInitialized = true;
@@ -33,7 +33,7 @@ class RedisLoadBalancer {
         const redisUrls = this._getRedisUrls();
 
         if (redisUrls.length === 0) {
-            console.log('⚠️  No Redis URLs found - using Mock Redis');
+            // console.log('⚠️  No Redis URLs found - using Mock Redis');
             this.connections.push(new MockRedis());
             this.connectionStats.push({ requests: 0, errors: 0, name: 'mock', healthy: true });
         } else {
@@ -47,7 +47,7 @@ class RedisLoadBalancer {
                         name: `redis-${idx + 1}`,
                         healthy: true
                     });
-                    console.log(`✅ Redis Pool ${idx + 1} configured`);
+                    // console.log(`✅ Redis Pool ${idx + 1} configured`);
                 } catch (err) {
                     console.error(`❌ Failed to configure Redis ${idx + 1}:`, err.message);
                 }
@@ -56,13 +56,13 @@ class RedisLoadBalancer {
 
         // Fallback to mock if no connections succeeded
         if (this.connections.length === 0) {
-            console.log('⚠️  All Redis connections failed - using Mock Redis');
+            // console.log('⚠️  All Redis connections failed - using Mock Redis');
             this.connections.push(new MockRedis());
             this.connectionStats.push({ requests: 0, errors: 0, name: 'mock' });
         }
 
         this.isInitialized = true;
-        console.log(`🔄 Redis Load Balancer initialized with ${this.connections.length} connection(s)`);
+        // console.log(`🔄 Redis Load Balancer initialized with ${this.connections.length} connection(s)`);
     }
 
     _getRedisUrls() {
@@ -108,7 +108,7 @@ class RedisLoadBalancer {
                     if (err.message.includes('max requests limit exceeded')) {
                         this.connectionStats[index].healthy = false;
                         this.connectionStats[index].dead = true;
-                        console.log(`💀 Redis-${index + 1} marked as DEAD (limit exceeded)`);
+                        // console.log(`💀 Redis-${index + 1} marked as DEAD (limit exceeded)`);
                     } else {
                         this.connectionStats[index].healthy = false;
                     }
@@ -216,17 +216,17 @@ class RedisLoadBalancer {
 
             // Skip known dead connections
             if (stats.dead) {
-                console.log(`⏭️ Skipping dead Redis-${idx + 1}`);
+                // console.log(`⏭️ Skipping dead Redis-${idx + 1}`);
                 continue;
             }
 
             // This connection is candidate
-            console.log(`📍 Selecting Redis-${idx + 1} for BullMQ`);
+            // console.log(`📍 Selecting Redis-${idx + 1} for BullMQ`);
             return this.connections[idx];
         }
 
         // All dead - return first anyway (will error but that's expected)
-        console.warn('⚠️ All Redis connections exhausted');
+        // console.warn('⚠️ All Redis connections exhausted');
         return this.connections[0];
     }
 
@@ -241,17 +241,17 @@ class RedisLoadBalancer {
             const conn = this.connections[idx];
 
             if (stats.dead) {
-                console.log(`⏭️ Skipping dead Redis-${idx + 1}`);
+                // console.log(`⏭️ Skipping dead Redis-${idx + 1}`);
                 continue;
             }
 
             // Test with ping
             try {
                 await conn.ping();
-                console.log(`✅ Redis-${idx + 1} ping successful, using for BullMQ`);
+                // console.log(`✅ Redis-${idx + 1} ping successful, using for BullMQ`);
                 return conn;
             } catch (err) {
-                console.log(`❌ Redis-${idx + 1} ping failed: ${err.message}`);
+                // console.log(`❌ Redis-${idx + 1} ping failed: ${err.message}`);
                 stats.healthy = false;
                 if (err.message.includes('max requests limit exceeded')) {
                     stats.dead = true;
@@ -259,7 +259,7 @@ class RedisLoadBalancer {
             }
         }
 
-        console.warn('⚠️ All Redis connections failed ping test');
+        // console.warn('⚠️ All Redis connections failed ping test');
         return this.connections[0];
     }
 
@@ -300,7 +300,7 @@ class RedisLoadBalancer {
 class MockRedis {
     constructor() {
         this.store = new Map();
-        console.log('⚠️  Using Mock Redis (in-memory)');
+        // console.log('⚠️  Using Mock Redis (in-memory)');
     }
 
     async get(key) { return this.store.get(key) || null; }
@@ -336,7 +336,7 @@ class MockRedis {
         return 1;
     }
     async hgetall(key) { return this.store.get(key) || {}; }
-    on() {}
+    on() { }
 }
 
 // Export singleton instance

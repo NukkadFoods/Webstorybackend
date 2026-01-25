@@ -17,7 +17,7 @@ class CacheService {
       short: 60,              // 1 minute for frequently changing data
       long: 604800            // 7 days for rarely changing data
     };
-    console.log('✅ Redis CacheService initialized');
+    // console.log('✅ Redis CacheService initialized');
   }
 
   /**
@@ -37,7 +37,7 @@ class CacheService {
       // 1. Check Cache First
       const cachedData = await redis.get(key);
       if (cachedData) {
-        console.log(`⚡ Cache Hit: ${key}`);
+        // console.log(`⚡ Cache Hit: ${key}`);
         try {
           return JSON.parse(cachedData);
         } catch {
@@ -46,14 +46,14 @@ class CacheService {
       }
 
       // 2. Cache Miss - Fetch Fresh Data
-      console.log(`🐢 Cache Miss: ${key} - Fetching...`);
+      // console.log(`🐢 Cache Miss: ${key} - Fetching...`);
       const freshData = await fetchFunction();
 
       // 3. Cache the Result (if data exists)
       if (freshData !== null && freshData !== undefined) {
         const dataToCache = typeof freshData === 'string' ? freshData : JSON.stringify(freshData);
         await redis.setex(key, ttlSeconds, dataToCache);
-        console.log(`💾 Cached: ${key} (TTL: ${ttlSeconds}s)`);
+        // console.log(`💾 Cached: ${key} (TTL: ${ttlSeconds}s)`);
       }
 
       return freshData;
@@ -76,7 +76,7 @@ class CacheService {
     try {
       const data = await redis.get(key);
       if (!data) return null;
-      
+
       try {
         return JSON.parse(data);
       } catch {
@@ -109,7 +109,7 @@ class CacheService {
   async del(key) {
     try {
       await redis.del(key);
-      console.log(`🗑️ Deleted cache key: ${key}`);
+      // console.log(`🗑️ Deleted cache key: ${key}`);
       return true;
     } catch (error) {
       console.error(`Cache delete error for "${key}":`, error.message);
@@ -125,7 +125,7 @@ class CacheService {
       const keys = await redis.keys(pattern);
       if (keys.length > 0) {
         await redis.del(...keys);
-        console.log(`🗑️ Deleted ${keys.length} keys matching pattern: ${pattern}`);
+        // console.log(`🗑️ Deleted ${keys.length} keys matching pattern: ${pattern}`);
       }
       return keys.length;
     } catch (error) {
@@ -165,7 +165,7 @@ class CacheService {
     const patternArray = Array.isArray(patterns) ? patterns : [patterns];
     const results = await Promise.all(patternArray.map(p => this.delPattern(p)));
     const totalDeleted = results.reduce((sum, count) => sum + count, 0);
-    console.log(`🔄 Invalidated ${totalDeleted} cache entries`);
+    // console.log(`🔄 Invalidated ${totalDeleted} cache entries`);
     return totalDeleted;
   }
 
@@ -175,7 +175,7 @@ class CacheService {
   async flush() {
     try {
       await redis.flushdb();
-      console.log('🧹 Cache flushed completely');
+      // console.log('🧹 Cache flushed completely');
       return true;
     } catch (error) {
       console.error('Cache flush error:', error.message);
@@ -191,7 +191,7 @@ class CacheService {
       const info = await redis.info('stats');
       const dbSize = await redis.dbsize();
       const memory = await redis.info('memory');
-      
+
       return {
         dbSize,
         info: info.split('\r\n').reduce((acc, line) => {
@@ -243,14 +243,14 @@ class CacheService {
   async pushToList(listKey, articleIds, maxLength = 20) {
     try {
       if (!Array.isArray(articleIds) || articleIds.length === 0) return 0;
-      
+
       // LPUSH adds to the front of the list (newest first)
       await redis.lpush(listKey, ...articleIds);
-      
+
       // LTRIM keeps only the first 'maxLength' items
       await redis.ltrim(listKey, 0, maxLength - 1);
-      
-      console.log(`📋 Updated Redis List "${listKey}" with ${articleIds.length} articles (max: ${maxLength})`);
+
+      // console.log(`📋 Updated Redis List "${listKey}" with ${articleIds.length} articles (max: ${maxLength})`);
       return articleIds.length;
     } catch (error) {
       console.error(`Redis list push error for "${listKey}":`, error.message);
@@ -274,39 +274,39 @@ class CacheService {
       }
 
       const sectionKey = `section:${section}:articles`;
-      
+
       // Get current articles in the section cache
       const currentIds = await redis.lrange(sectionKey, 0, -1);
-      
+
       // Add new articles to the END (using RPUSH - right push)
       // This maintains insertion order: oldest on left, newest on right
       await redis.rpush(sectionKey, ...newArticleIds);
-      
+
       // Get total count after adding
       const totalCount = await redis.llen(sectionKey);
-      
+
       let removed = 0;
 
       // If we exceed maxArticles, remove from the LEFT (FIFO - oldest first)
       if (totalCount > maxArticles) {
         const toRemove = totalCount - maxArticles;
-        
+
         // LRANGE to get the IDs we're about to remove (for cleanup)
         const oldestIds = await redis.lrange(sectionKey, 0, toRemove - 1);
-        
+
         // Remove the oldest articles from the list
         await redis.ltrim(sectionKey, toRemove, -1);
-        
+
         // Also remove individual article caches for the oldest articles
         for (const articleId of oldestIds) {
           const articleKey = `article:${articleId}`;
           await redis.del(articleKey);
           removed++;
         }
-        
-        console.log(`🗑️ [${section}] FIFO: Added ${newArticleIds.length}, Removed ${removed} oldest articles (cache limited to ${maxArticles})`);
+
+        // console.log(`🗑️ [${section}] FIFO: Added ${newArticleIds.length}, Removed ${removed} oldest articles (cache limited to ${maxArticles})`);
       } else {
-        console.log(`✅ [${section}] FIFO: Added ${newArticleIds.length} articles (total: ${totalCount}/${maxArticles})`);
+        // console.log(`✅ [${section}] FIFO: Added ${newArticleIds.length} articles (total: ${totalCount}/${maxArticles})`);
       }
 
       return { added: newArticleIds.length, removed };
@@ -347,7 +347,7 @@ class CacheService {
   async getFromList(listKey, start = 0, end = 19) {
     try {
       const ids = await redis.lrange(listKey, start, end);
-      console.log(`📋 Fetched ${ids.length} articles from Redis List "${listKey}"`);
+      // console.log(`📋 Fetched ${ids.length} articles from Redis List "${listKey}"`);
       return ids;
     } catch (error) {
       console.error(`Redis list get error for "${listKey}":`, error.message);
@@ -373,7 +373,7 @@ class CacheService {
   async clearList(listKey) {
     try {
       await redis.del(listKey);
-      console.log(`🗑️ Cleared Redis List: ${listKey}`);
+      // console.log(`🗑️ Cleared Redis List: ${listKey}`);
       return true;
     } catch (error) {
       console.error(`Redis list clear error for "${listKey}":`, error.message);
