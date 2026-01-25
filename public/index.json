@@ -1,0 +1,11 @@
+{
+  "name": "Webstory Backend API",
+  "description": "Backend API server for Webstory platform",
+  "status": "operational",
+  "version": "1.0.0",
+  "endpoints": [
+    "/api/articles",
+    "/api/articles/search",
+    "/api/articles/:id"
+  ]
+}
