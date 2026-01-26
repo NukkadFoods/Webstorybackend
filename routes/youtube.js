@@ -17,6 +17,7 @@ router.get('/videos', async (req, res) => {
   try {
     const maxResults = parseInt(req.query.maxResults) || 12;
     const type = req.query.type || 'all';
+    const pageToken = req.query.pageToken || '';
 
     // Step 1: Search for videos from the channel
     const searchUrl = `https://www.googleapis.com/youtube/v3/search`;
@@ -26,16 +27,19 @@ router.get('/videos', async (req, res) => {
       part: 'snippet',
       order: 'date', // Sort by newest first
       maxResults: maxResults,
-      type: 'video' // Only fetch videos
+      type: 'video', // Only fetch videos
+      pageToken: pageToken
     };
 
     const searchResponse = await axios.get(searchUrl, { params: searchParams });
     const searchResults = searchResponse.data.items || [];
+    const nextPageToken = searchResponse.data.nextPageToken || null;
 
     if (searchResults.length === 0) {
       return res.json({
         success: true,
         videos: [],
+        nextPageToken: null,
         message: 'No videos found'
       });
     }
@@ -95,6 +99,7 @@ router.get('/videos', async (req, res) => {
     res.json({
       success: true,
       count: formattedVideos.length,
+      nextPageToken: nextPageToken,
       videos: formattedVideos
     });
 
