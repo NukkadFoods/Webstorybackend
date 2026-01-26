@@ -27,10 +27,15 @@ class TTSService {
             throw new Error('TTS script not found');
         }
 
+        console.log(`[TTS] Starting Python process with: ${this.pythonPath}`);
+        console.log(`[TTS] Script path: ${this.scriptPath}`);
+        console.log(`[TTS] Text length: ${text.length} chars, Voice: ${voice}`);
+
         return new Promise((resolve, reject) => {
             const outputStream = new PassThrough();
             let hasReceivedData = false;
             let stderrOutput = '';
+            let resolved = false;
 
             const pythonProcess = spawn(this.pythonPath, [
                 this.scriptPath,
@@ -41,36 +46,56 @@ class TTSService {
             // Collect stderr for error reporting
             pythonProcess.stderr.on('data', (data) => {
                 stderrOutput += data.toString();
-                console.error(`TTS Python Error: ${data.toString()}`);
+                console.error(`[TTS] Python stderr: ${data.toString()}`);
             });
 
             pythonProcess.stdout.on('data', (chunk) => {
-                hasReceivedData = true;
+                if (!hasReceivedData) {
+                    hasReceivedData = true;
+                    console.log(`[TTS] First audio chunk received: ${chunk.length} bytes`);
+                    // Resolve on first data chunk so streaming can begin
+                    if (!resolved) {
+                        resolved = true;
+                        resolve({ stream: outputStream, process: pythonProcess });
+                    }
+                }
                 outputStream.write(chunk);
             });
 
             pythonProcess.stdout.on('end', () => {
+                console.log(`[TTS] Python stdout ended, received data: ${hasReceivedData}`);
                 outputStream.end();
             });
 
             pythonProcess.on('error', (err) => {
-                console.error('Failed to start TTS process:', err);
-                reject(new Error(`Failed to start Python: ${err.message}`));
+                console.error('[TTS] Failed to start Python process:', err);
+                if (!resolved) {
+                    resolved = true;
+                    reject(new Error(`Failed to start Python: ${err.message}`));
+                }
             });
 
             pythonProcess.on('close', (code) => {
+                console.log(`[TTS] Python process closed with code: ${code}`);
                 if (code !== 0 && !hasReceivedData) {
                     const errorMsg = stderrOutput || `Process exited with code ${code}`;
-                    reject(new Error(`TTS generation failed: ${errorMsg}`));
+                    console.error(`[TTS] Process failed: ${errorMsg}`);
+                    if (!resolved) {
+                        resolved = true;
+                        reject(new Error(`TTS generation failed: ${errorMsg}`));
+                    }
                 }
             });
 
-            // Give the process a moment to start and potentially fail
+            // Timeout: if no data after 10 seconds, resolve anyway to avoid hanging
+            // (the stream will just be empty, which the route will handle)
             setTimeout(() => {
-                if (!pythonProcess.killed) {
+                if (!resolved) {
+                    console.warn('[TTS] Timeout waiting for first audio chunk, resolving with empty stream');
+                    resolved = true;
                     resolve({ stream: outputStream, process: pythonProcess });
                 }
-            }, 100);
+            }, 10000);
         });
     }
 
