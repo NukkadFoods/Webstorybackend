@@ -1,20 +1,20 @@
 /**
  * 🔴 Redis Load Balancer - Distributes requests across multiple Upstash instances
- * Doubles free tier limits (500K + 500K = 1M requests/month)
+ * Uses REST API for better serverless compatibility
+ * Supports 4 instances for ~2M requests/month free tier
  */
-
-const IORedis = require('ioredis');
 
 class RedisLoadBalancer {
     constructor() {
-        this.connections = [];
+        this.instances = [];
         this.currentIndex = 0;
-        this.connectionStats = [];
         this.isInitialized = false;
-        // Daily request tracking (Upstash free tier: ~10K commands/day)
+        // Daily request tracking (Upstash free tier: ~10K commands/day per instance)
         this.DAILY_LIMIT_PER_INSTANCE = 9000; // Leave buffer below 10K
         this.dailyRequests = [];
         this.lastResetDate = new Date().toDateString();
+        // In-memory fallback cache
+        this.memoryCache = new Map();
     }
 
     /**
@@ -26,12 +26,12 @@ class RedisLoadBalancer {
             console.log('🔄 Resetting daily Redis request counters');
             this.dailyRequests = this.dailyRequests.map(() => 0);
             this.lastResetDate = today;
-            // Also reset dead status - give instances a fresh chance
-            this.connectionStats.forEach(stats => {
-                if (stats.dead && stats.name !== 'mock') {
-                    stats.dead = false;
-                    stats.healthy = true;
-                    console.log(`✅ ${stats.name} reset for new day`);
+            // Reset dead status - give instances a fresh chance
+            this.instances.forEach(inst => {
+                if (inst.dead) {
+                    inst.dead = false;
+                    inst.healthy = true;
+                    console.log(`✅ ${inst.name} reset for new day`);
                 }
             });
         }
@@ -39,377 +39,408 @@ class RedisLoadBalancer {
 
     /**
      * Initialize connections from environment variables
-     * Supports REDIS_URL, REDIS_URL_2, REDIS_URL_3, etc.
+     * Supports UPSTASH_REDIS_REST_URL1/TOKEN1 through URL4/TOKEN4
      */
     initialize() {
         if (this.isInitialized) return;
 
-        // Check if Redis is disabled for local development
+        // Check if Redis is disabled
         if (process.env.REDIS_DISABLED === 'true') {
-            // console.log('🔌 Redis DISABLED - using Mock Redis (in-memory)');
-            // console.log('   Set REDIS_DISABLED=false when Upstash limits reset');
-            this.connections.push(new MockRedis());
-            this.connectionStats.push({ requests: 0, errors: 0, name: 'mock', healthy: true });
+            console.log('🔌 Redis DISABLED - using in-memory cache');
             this.isInitialized = true;
             return;
         }
 
-        const redisUrls = this._getRedisUrls();
+        // Load all Upstash REST API instances
+        for (let i = 1; i <= 4; i++) {
+            const url = process.env[`UPSTASH_REDIS_REST_URL${i}`]?.replace(/"/g, '');
+            const token = process.env[`UPSTASH_REDIS_REST_TOKEN${i}`]?.replace(/"/g, '');
 
-        if (redisUrls.length === 0) {
-            // console.log('⚠️  No Redis URLs found - using Mock Redis');
-            this.connections.push(new MockRedis());
-            this.connectionStats.push({ requests: 0, errors: 0, name: 'mock', healthy: true });
-            this.dailyRequests.push(0);
-        } else {
-            redisUrls.forEach((url, idx) => {
-                try {
-                    const conn = this._createConnection(url, idx);
-                    this.connections.push(conn);
-                    this.connectionStats.push({
-                        requests: 0,
-                        errors: 0,
-                        name: `redis-${idx + 1}`,
-                        healthy: true
-                    });
-                    this.dailyRequests.push(0);
-                    console.log(`✅ Redis Pool ${idx + 1} configured (daily limit: ${this.DAILY_LIMIT_PER_INSTANCE})`);
-                } catch (err) {
-                    console.error(`❌ Failed to configure Redis ${idx + 1}:`, err.message);
-                }
-            });
+            if (url && token) {
+                this.instances.push({
+                    name: `redis-${i}`,
+                    url: url,
+                    token: token,
+                    requests: 0,
+                    errors: 0,
+                    healthy: true,
+                    dead: false
+                });
+                this.dailyRequests.push(0);
+                console.log(`✅ Redis-${i} configured: ${url.split('.')[0].replace('https://', '')}`);
+            }
         }
 
-        // Fallback to mock if no connections succeeded
-        if (this.connections.length === 0) {
-            // console.log('⚠️  All Redis connections failed - using Mock Redis');
-            this.connections.push(new MockRedis());
-            this.connectionStats.push({ requests: 0, errors: 0, name: 'mock', healthy: true });
-            this.dailyRequests.push(0);
+        if (this.instances.length === 0) {
+            console.log('⚠️  No Redis instances configured - using in-memory cache');
+        } else {
+            console.log(`🔄 Redis Load Balancer: ${this.instances.length} instances ready`);
         }
 
         this.isInitialized = true;
-        // console.log(`🔄 Redis Load Balancer initialized with ${this.connections.length} connection(s)`);
-    }
-
-    _getRedisUrls() {
-        const urls = [];
-
-        // Primary URL
-        if (process.env.REDIS_URL) {
-            urls.push(process.env.REDIS_URL);
-        }
-
-        // Additional URLs (REDIS_URL_2, REDIS_URL_3, etc.)
-        for (let i = 2; i <= 10; i++) {
-            const url = process.env[`REDIS_URL_${i}`];
-            if (url) urls.push(url);
-        }
-
-        return urls;
-    }
-
-    _createConnection(url, index) {
-        // Convert redis:// to rediss:// for TLS if using upstash
-        const redisUrl = url.includes('upstash.io')
-            ? url.replace('redis://', 'rediss://')
-            : url;
-
-        const conn = new IORedis(redisUrl, {
-            maxRetriesPerRequest: null, // Required for BullMQ compatibility
-            enableReadyCheck: false,
-            connectTimeout: 10000,
-            retryStrategy(times) {
-                if (times > 5) return null; // Stop retrying after 5 attempts
-                return Math.min(times * 200, 3000);
-            },
-            tls: url.includes('upstash.io') ? { rejectUnauthorized: false } : undefined,
-        });
-
-        conn.on('error', (err) => {
-            if (!err.message.includes('ECONNRESET')) {
-                console.error(`🔴 Redis-${index + 1} Error:`, err.message);
-                if (this.connectionStats[index]) {
-                    this.connectionStats[index].errors++;
-                    // Mark as DEAD if limit exceeded (won't recover this billing cycle)
-                    if (err.message.includes('max requests limit exceeded')) {
-                        this.connectionStats[index].healthy = false;
-                        this.connectionStats[index].dead = true;
-                        // console.log(`💀 Redis-${index + 1} marked as DEAD (limit exceeded)`);
-                    } else {
-                        this.connectionStats[index].healthy = false;
-                    }
-                }
-            }
-        });
-
-        conn.on('ready', () => {
-            if (this.connectionStats[index] && !this.connectionStats[index].dead) {
-                this.connectionStats[index].healthy = true;
-            }
-        });
-
-        return conn;
     }
 
     /**
-     * Get the next connection using smart load balancing:
-     * 1. Check daily reset
-     * 2. Skip instances at daily limit
-     * 3. Prefer instance with fewer daily requests (least-used first)
+     * Simple hash function for consistent key routing
      */
-    _getConnection() {
-        if (!this.isInitialized) this.initialize();
+    _hashKey(key) {
+        let hash = 0;
+        for (let i = 0; i < key.length; i++) {
+            const char = key.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32bit integer
+        }
+        return Math.abs(hash);
+    }
 
-        // Reset daily counters if new day
+    /**
+     * Get instance using consistent key-based routing
+     * Same key always goes to same healthy instance (for data consistency)
+     */
+    _getInstanceForKey(key) {
+        if (!this.isInitialized) this.initialize();
         this._checkDailyReset();
 
-        // Find the best available connection
+        if (this.instances.length === 0) return null;
+
+        // Get healthy instances
+        const healthyIndices = [];
+        for (let i = 0; i < this.instances.length; i++) {
+            const inst = this.instances[i];
+            const dailyCount = this.dailyRequests[i] || 0;
+
+            if (inst.dead || !inst.healthy) continue;
+            if (dailyCount >= this.DAILY_LIMIT_PER_INSTANCE) continue;
+
+            healthyIndices.push(i);
+        }
+
+        if (healthyIndices.length === 0) return null;
+
+        // Use consistent hashing to route key to same instance
+        const hash = this._hashKey(key || 'default');
+        const targetIndex = healthyIndices[hash % healthyIndices.length];
+
+        this.dailyRequests[targetIndex]++;
+        this.instances[targetIndex].requests++;
+        return this.instances[targetIndex];
+    }
+
+    /**
+     * Get the best available instance using round-robin (for non-key operations)
+     */
+    _getInstance() {
+        if (!this.isInitialized) this.initialize();
+        this._checkDailyReset();
+
+        // Find instance with lowest daily usage that isn't dead/unhealthy
         let bestIndex = -1;
         let lowestUsage = Infinity;
 
-        for (let i = 0; i < this.connections.length; i++) {
-            const stats = this.connectionStats[i];
+        for (let i = 0; i < this.instances.length; i++) {
+            const inst = this.instances[i];
             const dailyCount = this.dailyRequests[i] || 0;
 
-            // Skip dead or unhealthy connections
-            if (stats.dead || !stats.healthy) continue;
-
-            // Skip if at daily limit (unless it's mock which has no limit)
-            if (stats.name !== 'mock' && dailyCount >= this.DAILY_LIMIT_PER_INSTANCE) {
-                console.log(`⚠️ ${stats.name} at daily limit (${dailyCount}/${this.DAILY_LIMIT_PER_INSTANCE}), skipping`);
+            if (inst.dead || !inst.healthy) continue;
+            if (dailyCount >= this.DAILY_LIMIT_PER_INSTANCE) {
                 continue;
             }
 
-            // Prefer the connection with lowest daily usage
             if (dailyCount < lowestUsage) {
                 lowestUsage = dailyCount;
                 bestIndex = i;
             }
         }
 
-        // If no connection found, use mock or first available
         if (bestIndex === -1) {
-            console.warn('⚠️ All Redis instances exhausted or unhealthy, using fallback');
-            // Try to find mock or any connection
-            bestIndex = this.connectionStats.findIndex(s => s.name === 'mock');
-            if (bestIndex === -1) bestIndex = 0;
+            return null; // All instances exhausted
         }
 
-        // Update counters
-        this.connectionStats[bestIndex].requests++;
-        this.dailyRequests[bestIndex] = (this.dailyRequests[bestIndex] || 0) + 1;
-
-        return { connection: this.connections[bestIndex], index: bestIndex };
+        this.dailyRequests[bestIndex]++;
+        this.instances[bestIndex].requests++;
+        return this.instances[bestIndex];
     }
 
     /**
-     * Execute a Redis command with automatic failover
+     * Execute REST API call to Upstash
      */
-    async _execute(command, ...args) {
-        const { connection, index } = this._getConnection();
-
+    async _restCall(instance, command) {
         try {
-            const result = await connection[command](...args);
-            return result;
+            const response = await fetch(`${instance.url}/${command}`, {
+                headers: { Authorization: `Bearer ${instance.token}` }
+            });
+
+            const data = await response.json();
+
+            if (data.error) {
+                if (data.error.includes('max requests limit exceeded')) {
+                    instance.dead = true;
+                    instance.healthy = false;
+                    console.error(`💀 ${instance.name} rate limited - marked dead`);
+                }
+                throw new Error(data.error);
+            }
+
+            return data.result;
         } catch (err) {
-            // Mark connection as unhealthy
-            if (this.connectionStats[index]) {
-                this.connectionStats[index].errors++;
-                this.connectionStats[index].healthy = false;
-
-                // If rate limited, mark as dead and max out daily counter
-                if (err.message && err.message.includes('max requests limit exceeded')) {
-                    this.connectionStats[index].dead = true;
-                    this.dailyRequests[index] = this.DAILY_LIMIT_PER_INSTANCE;
-                    console.error(`💀 Redis-${index + 1} rate limited - marked as exhausted for today`);
-                }
-            }
-
-            // Try another connection if available
-            if (this.connections.length > 1) {
-                for (let i = 0; i < this.connections.length; i++) {
-                    if (i === index) continue;
-                    const stats = this.connectionStats[i];
-                    const dailyCount = this.dailyRequests[i] || 0;
-
-                    // Skip if dead, unhealthy, or at limit
-                    if (stats.dead || !stats.healthy) continue;
-                    if (stats.name !== 'mock' && dailyCount >= this.DAILY_LIMIT_PER_INSTANCE) continue;
-
-                    try {
-                        this.dailyRequests[i] = dailyCount + 1;
-                        return await this.connections[i][command](...args);
-                    } catch (fallbackErr) {
-                        // Mark this one as failed too
-                        stats.errors++;
-                        if (fallbackErr.message?.includes('max requests limit exceeded')) {
-                            stats.dead = true;
-                            this.dailyRequests[i] = this.DAILY_LIMIT_PER_INSTANCE;
-                        }
-                    }
-                }
-            }
-
+            instance.errors++;
+            instance.healthy = false;
             throw err;
         }
     }
 
-    // Redis command proxies
-    async get(key) { return this._execute('get', key); }
-    async set(key, value, ...args) { return this._execute('set', key, value, ...args); }
-    async setex(key, seconds, value) { return this._execute('setex', key, seconds, value); }
-    async del(...keys) { return this._execute('del', ...keys); }
-    async keys(pattern) { return this._execute('keys', pattern); }
-    async exists(key) { return this._execute('exists', key); }
-    async ttl(key) { return this._execute('ttl', key); }
-    async ping() { return this._execute('ping'); }
-    async incr(key) { return this._execute('incr', key); }
-    async expire(key, seconds) { return this._execute('expire', key, seconds); }
-    async hget(key, field) { return this._execute('hget', key, field); }
-    async hset(key, field, value) { return this._execute('hset', key, field, value); }
-    async hgetall(key) { return this._execute('hgetall', key); }
-
     /**
-     * Get a raw connection (for BullMQ which needs direct access)
-     * Tests connection with ping, skips dead/failing ones
+     * Execute command with automatic failover
+     * Uses consistent key routing when key is provided
      */
-    getRawConnection() {
-        if (!this.isInitialized) this.initialize();
+    async _execute(command, key = null) {
+        // Get instance - use key-based routing for data consistency
+        const instance = key ? this._getInstanceForKey(key) : this._getInstance();
 
-        // Find first working connection by testing each
-        for (let idx = 0; idx < this.connections.length; idx++) {
-            const stats = this.connectionStats[idx];
-
-            // Skip known dead connections
-            if (stats.dead) {
-                // console.log(`⏭️ Skipping dead Redis-${idx + 1}`);
-                continue;
-            }
-
-            // This connection is candidate
-            // console.log(`📍 Selecting Redis-${idx + 1} for BullMQ`);
-            return this.connections[idx];
+        if (!instance) {
+            // All Redis instances exhausted
+            return null;
         }
 
-        // All dead - return first anyway (will error but that's expected)
-        // console.warn('⚠️ All Redis connections exhausted');
-        return this.connections[0];
+        try {
+            return await this._restCall(instance, command);
+        } catch (err) {
+            // Log error but don't retry (maintain consistency)
+            console.error(`❌ ${instance.name} failed: ${err.message}`);
+            return null;
+        }
     }
 
-    /**
-     * Async version that tests with ping before returning
-     */
-    async getRawConnectionAsync() {
-        if (!this.isInitialized) this.initialize();
-
-        for (let idx = 0; idx < this.connections.length; idx++) {
-            const stats = this.connectionStats[idx];
-            const conn = this.connections[idx];
-
-            if (stats.dead) {
-                // console.log(`⏭️ Skipping dead Redis-${idx + 1}`);
-                continue;
-            }
-
-            // Test with ping
-            try {
-                await conn.ping();
-                // console.log(`✅ Redis-${idx + 1} ping successful, using for BullMQ`);
-                return conn;
-            } catch (err) {
-                // console.log(`❌ Redis-${idx + 1} ping failed: ${err.message}`);
-                stats.healthy = false;
-                if (err.message.includes('max requests limit exceeded')) {
-                    stats.dead = true;
-                }
-            }
+    // Redis command implementations using REST API with consistent key routing
+    async get(key) {
+        const result = await this._execute(`get/${encodeURIComponent(key)}`, key);
+        if (result === null) {
+            return this.memoryCache.get(key) || null;
         }
+        return result;
+    }
 
-        // console.warn('⚠️ All Redis connections failed ping test');
-        return this.connections[0];
+    async set(key, value, ...args) {
+        this.memoryCache.set(key, value);
+        let command = `set/${encodeURIComponent(key)}/${encodeURIComponent(value)}`;
+        if (args.length >= 2 && args[0]?.toUpperCase() === 'EX') {
+            command += `/EX/${args[1]}`;
+        }
+        const result = await this._execute(command, key);
+        return result || 'OK';
+    }
+
+    async setex(key, seconds, value) {
+        this.memoryCache.set(key, value);
+        setTimeout(() => this.memoryCache.delete(key), seconds * 1000);
+        const result = await this._execute(
+            `setex/${encodeURIComponent(key)}/${seconds}/${encodeURIComponent(value)}`, key
+        );
+        return result || 'OK';
+    }
+
+    async del(...keys) {
+        keys.forEach(k => this.memoryCache.delete(k));
+        // For multi-key delete, route to first key's instance
+        const result = await this._execute(`del/${keys.map(k => encodeURIComponent(k)).join('/')}`, keys[0]);
+        return result || keys.length;
+    }
+
+    async exists(key) {
+        const result = await this._execute(`exists/${encodeURIComponent(key)}`, key);
+        if (result === null) {
+            return this.memoryCache.has(key) ? 1 : 0;
+        }
+        return result;
+    }
+
+    async ttl(key) {
+        const result = await this._execute(`ttl/${encodeURIComponent(key)}`, key);
+        return result ?? -1;
+    }
+
+    async ping() {
+        const result = await this._execute('ping');
+        return result || 'PONG';
+    }
+
+    async incr(key) {
+        const result = await this._execute(`incr/${encodeURIComponent(key)}`, key);
+        if (result === null) {
+            const val = parseInt(this.memoryCache.get(key) || '0', 10) + 1;
+            this.memoryCache.set(key, String(val));
+            return val;
+        }
+        return result;
+    }
+
+    async expire(key, seconds) {
+        const result = await this._execute(`expire/${encodeURIComponent(key)}/${seconds}`, key);
+        return result ?? 1;
+    }
+
+    async keys(pattern) {
+        // Keys command searches all instances and merges results
+        const allKeys = new Set();
+        for (const inst of this.instances) {
+            if (inst.dead || !inst.healthy) continue;
+            try {
+                const result = await this._restCall(inst, `keys/${encodeURIComponent(pattern)}`);
+                if (Array.isArray(result)) {
+                    result.forEach(k => allKeys.add(k));
+                }
+            } catch (e) { /* continue */ }
+        }
+        return Array.from(allKeys);
+    }
+
+    async hget(key, field) {
+        const result = await this._execute(`hget/${encodeURIComponent(key)}/${encodeURIComponent(field)}`, key);
+        return result;
+    }
+
+    async hset(key, field, value) {
+        const result = await this._execute(
+            `hset/${encodeURIComponent(key)}/${encodeURIComponent(field)}/${encodeURIComponent(value)}`, key
+        );
+        return result ?? 1;
+    }
+
+    async hgetall(key) {
+        const result = await this._execute(`hgetall/${encodeURIComponent(key)}`, key);
+        return result || {};
+    }
+
+    // List operations (for CacheService FIFO patterns) - all routed by key
+    async lpush(key, ...values) {
+        const encodedValues = values.map(v => encodeURIComponent(v)).join('/');
+        const result = await this._execute(`lpush/${encodeURIComponent(key)}/${encodedValues}`, key);
+        return result ?? values.length;
+    }
+
+    async rpush(key, ...values) {
+        const encodedValues = values.map(v => encodeURIComponent(v)).join('/');
+        const result = await this._execute(`rpush/${encodeURIComponent(key)}/${encodedValues}`, key);
+        return result ?? values.length;
+    }
+
+    async lrange(key, start, end) {
+        const result = await this._execute(`lrange/${encodeURIComponent(key)}/${start}/${end}`, key);
+        return result || [];
+    }
+
+    async llen(key) {
+        const result = await this._execute(`llen/${encodeURIComponent(key)}`, key);
+        return result ?? 0;
+    }
+
+    async ltrim(key, start, end) {
+        const result = await this._execute(`ltrim/${encodeURIComponent(key)}/${start}/${end}`, key);
+        return result || 'OK';
+    }
+
+    // Database info operations (non-key specific)
+    async info(section = '') {
+        const result = await this._execute(section ? `info/${section}` : 'info');
+        return result || '';
+    }
+
+    async dbsize() {
+        // Sum dbsize from all instances
+        let total = 0;
+        for (const inst of this.instances) {
+            if (inst.dead || !inst.healthy) continue;
+            try {
+                const result = await this._restCall(inst, 'dbsize');
+                total += result || 0;
+            } catch (e) { /* continue */ }
+        }
+        return total;
+    }
+
+    async flushdb() {
+        // Flush all instances
+        for (const inst of this.instances) {
+            if (inst.dead || !inst.healthy) continue;
+            try {
+                await this._restCall(inst, 'flushdb');
+            } catch (e) { /* continue */ }
+        }
+        this.memoryCache.clear();
+        return 'OK';
     }
 
     /**
      * Get load balancer statistics
      */
     getStats() {
+        if (!this.isInitialized) this.initialize();
         this._checkDailyReset();
+
         return {
-            totalConnections: this.connections.length,
+            totalInstances: this.instances.length,
             dailyLimit: this.DAILY_LIMIT_PER_INSTANCE,
-            connections: this.connectionStats.map((stats, idx) => ({
-                ...stats,
-                index: idx,
+            instances: this.instances.map((inst, idx) => ({
+                name: inst.name,
+                healthy: inst.healthy,
+                dead: inst.dead,
+                requests: inst.requests,
+                errors: inst.errors,
                 dailyRequests: this.dailyRequests[idx] || 0,
                 dailyRemaining: this.DAILY_LIMIT_PER_INSTANCE - (this.dailyRequests[idx] || 0),
                 atLimit: (this.dailyRequests[idx] || 0) >= this.DAILY_LIMIT_PER_INSTANCE
             })),
-            totalRequests: this.connectionStats.reduce((sum, s) => sum + s.requests, 0),
-            totalErrors: this.connectionStats.reduce((sum, s) => sum + s.errors, 0),
-            totalDailyRequests: this.dailyRequests.reduce((sum, r) => sum + r, 0)
+            totalRequests: this.instances.reduce((sum, i) => sum + i.requests, 0),
+            totalErrors: this.instances.reduce((sum, i) => sum + i.errors, 0),
+            totalDailyRequests: this.dailyRequests.reduce((sum, r) => sum + r, 0),
+            memoryCacheSize: this.memoryCache.size
         };
     }
 
     /**
-     * Gracefully close all connections
+     * Test all connections and return health status
+     */
+    async healthCheck() {
+        if (!this.isInitialized) this.initialize();
+
+        const results = [];
+        for (const inst of this.instances) {
+            const start = Date.now();
+            try {
+                const res = await fetch(`${inst.url}/ping`, {
+                    headers: { Authorization: `Bearer ${inst.token}` }
+                });
+                const data = await res.json();
+                const latency = Date.now() - start;
+
+                if (data.result === 'PONG') {
+                    inst.healthy = true;
+                    results.push({ name: inst.name, status: 'connected', latency });
+                } else {
+                    inst.healthy = false;
+                    results.push({ name: inst.name, status: 'failed', error: data.error });
+                }
+            } catch (err) {
+                inst.healthy = false;
+                results.push({ name: inst.name, status: 'error', error: err.message });
+            }
+        }
+
+        return results;
+    }
+
+    /**
+     * Gracefully close (clear memory cache)
      */
     async quit() {
-        await Promise.all(this.connections.map(conn => {
-            if (conn.quit) return conn.quit();
-            return Promise.resolve();
-        }));
+        this.memoryCache.clear();
+        console.log('🔌 Redis Load Balancer shut down');
     }
 
-    // Event handlers (for compatibility)
+    // Event handlers (for compatibility - no-op for REST API)
     on(event, handler) {
-        this.connections.forEach(conn => {
-            if (conn.on) conn.on(event, handler);
-        });
+        // REST API doesn't have persistent connections
     }
-}
-
-// Mock Redis for fallback
-class MockRedis {
-    constructor() {
-        this.store = new Map();
-        // console.log('⚠️  Using Mock Redis (in-memory)');
-    }
-
-    async get(key) { return this.store.get(key) || null; }
-    async set(key, value) { this.store.set(key, value); return 'OK'; }
-    async setex(key, seconds, value) {
-        this.store.set(key, value);
-        setTimeout(() => this.store.delete(key), seconds * 1000);
-        return 'OK';
-    }
-    async del(...keys) { keys.forEach(k => this.store.delete(k)); return keys.length; }
-    async keys(pattern) {
-        const regex = new RegExp(pattern.replace('*', '.*'));
-        return Array.from(this.store.keys()).filter(k => regex.test(k));
-    }
-    async exists(key) { return this.store.has(key) ? 1 : 0; }
-    async ttl(key) { return -1; }
-    async ping() { return 'PONG'; }
-    async quit() { this.store.clear(); }
-    async incr(key) {
-        const val = parseInt(this.store.get(key) || '0', 10) + 1;
-        this.store.set(key, String(val));
-        return val;
-    }
-    async expire() { return 1; }
-    async hget(key, field) {
-        const hash = this.store.get(key);
-        return hash?.[field] || null;
-    }
-    async hset(key, field, value) {
-        const hash = this.store.get(key) || {};
-        hash[field] = value;
-        this.store.set(key, hash);
-        return 1;
-    }
-    async hgetall(key) { return this.store.get(key) || {}; }
-    on() { }
 }
 
 // Export singleton instance
