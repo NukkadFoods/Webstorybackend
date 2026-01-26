@@ -13,8 +13,8 @@ class CommentaryWorker {
     this.processedToday = 0;
     this.maxDailyCommentaries = 100; // Limit to prevent excessive API usage
     this.workerInterval = null;
-    
-    console.log('🤖 Commentary Worker initialized');
+
+    // console.log('🤖 Commentary Worker initialized');
   }
 
   /**
@@ -22,12 +22,12 @@ class CommentaryWorker {
    */
   start() {
     if (this.isRunning) {
-      console.log('⚠️ Commentary worker already running');
+      // console.log('⚠️ Commentary worker already running');
       return;
     }
 
     this.isRunning = true;
-    console.log('🚀 Starting background commentary worker...');
+    // console.log('🚀 Starting background commentary worker...');
 
     // Process queue every 30 seconds
     this.workerInterval = setInterval(async () => {
@@ -47,7 +47,7 @@ class CommentaryWorker {
       this.workerInterval = null;
     }
     this.isRunning = false;
-    console.log('🛑 Commentary worker stopped');
+    // console.log('🛑 Commentary worker stopped');
   }
 
   /**
@@ -70,8 +70,8 @@ class CommentaryWorker {
 
     // Sort queue by priority (higher priority first)
     this.queue.sort((a, b) => b.priority - a.priority);
-    
-    console.log(`📝 Added articles to commentary queue. Queue size: ${this.queue.length}`);
+
+    // console.log(`📝 Added articles to commentary queue. Queue size: ${this.queue.length}`);
   }
 
   /**
@@ -113,27 +113,27 @@ class CommentaryWorker {
     }
 
     if (this.processedToday >= this.maxDailyCommentaries) {
-      console.log(`📊 Daily commentary limit reached: ${this.processedToday}/${this.maxDailyCommentaries}`);
+      // console.log(`📊 Daily commentary limit reached: ${this.processedToday}/${this.maxDailyCommentaries}`);
       return;
     }
 
     // Process highest priority item
     const item = this.queue.shift();
-    
+
     try {
-      console.log(`🤖 Generating commentary for: "${item.title.substring(0, 50)}..."`);
-      
+      // console.log(`🤖 Generating commentary for: "${item.title.substring(0, 50)}..."`);
+
       const commentary = await this.generateCommentary(item);
-      
+
       if (commentary) {
         await this.saveCommentary(item.articleId, commentary);
         this.processedToday++;
-        console.log(`✅ Commentary generated and saved for: "${item.title.substring(0, 30)}..."`);
+        // console.log(`✅ Commentary generated and saved for: "${item.title.substring(0, 30)}..."`);
       }
-      
+
     } catch (error) {
       console.error(`❌ Failed to generate commentary for "${item.title.substring(0, 30)}...":`, error.message);
-      
+
       // Re-add to queue with lower priority if it's a temporary error
       if (error.message.includes('Rate limit') || error.message.includes('timeout')) {
         item.priority = Math.max(1, item.priority - 1);
@@ -164,7 +164,7 @@ Keep the tone professional and analytical. Provide only the commentary without a
       const completion = await optimizedGroqCall(async () => {
         const Groq = require('groq-sdk');
         const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-        
+
         return await groq.chat.completions.create({
           messages: [
             {
@@ -209,17 +209,17 @@ Keep the tone professional and analytical. Provide only the commentary without a
     const tomorrow = new Date(now);
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(0, 0, 0, 0);
-    
+
     const msUntilMidnight = tomorrow - now;
-    
+
     setTimeout(() => {
       this.processedToday = 0;
-      console.log('🔄 Daily commentary counter reset');
-      
+      // console.log('🔄 Daily commentary counter reset');
+
       // Set up recurring daily reset
       setInterval(() => {
         this.processedToday = 0;
-        console.log('🔄 Daily commentary counter reset');
+        // console.log('🔄 Daily commentary counter reset');
       }, 24 * 60 * 60 * 1000);
     }, msUntilMidnight);
   }
@@ -245,14 +245,14 @@ Keep the tone professional and analytical. Provide only the commentary without a
    */
   async populateQueue() {
     try {
-      console.log('🔍 Looking for articles that need commentary...');
-      
+      // console.log('🔍 Looking for articles that need commentary...');
+
       const articles = await getAllArticles(50, 0); // Get recent articles
       const articlesNeedingCommentary = articles.filter(article => !article.commentary);
-      
+
       if (articlesNeedingCommentary.length > 0) {
         await this.addArticlesToQueue(articlesNeedingCommentary);
-        console.log(`📝 Found ${articlesNeedingCommentary.length} articles needing commentary`);
+        // console.log(`📝 Found ${articlesNeedingCommentary.length} articles needing commentary`);
       }
     } catch (error) {
       console.error('Failed to populate commentary queue:', error.message);

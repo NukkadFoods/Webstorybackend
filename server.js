@@ -33,7 +33,7 @@ if (process.env.GROQ_API_KEY) {
 // CORS configuration for production and development
 const corsOptions = {
   origin: function (origin, callback) {
-    console.log('CORS request from origin:', origin);
+    // console.log('CORS request from origin:', origin);
 
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
@@ -50,13 +50,13 @@ const corsOptions = {
 
     // Check if origin matches any allowed origin (exact match)
     if (allowedOrigins.includes(origin)) {
-      console.log('CORS allowed for origin:', origin);
+      // console.log('CORS allowed for origin:', origin);
       return callback(null, true);
     }
 
     // Check if origin is a Vercel deployment URL (for development/testing)
     if (origin && origin.includes('.vercel.app')) {
-      console.log('CORS allowed for Vercel deployment:', origin);
+      // console.log('CORS allowed for Vercel deployment:', origin);
       return callback(null, true);
     }
 
@@ -69,13 +69,13 @@ const corsOptions = {
       if (domain === 'forexyy.com' ||
         domain === 'www.forexyy.com' ||
         domain.endsWith('.forexyy.com')) {
-        console.log('CORS allowed for forexyy.com domain variation:', origin);
+        // console.log('CORS allowed for forexyy.com domain variation:', origin);
         return callback(null, true);
       }
 
       // Check for localhost variations (development)
       if (domain.startsWith('localhost:') || domain.startsWith('127.0.0.1:')) {
-        console.log('CORS allowed for localhost:', origin);
+        // console.log('CORS allowed for localhost:', origin);
         return callback(null, true);
       }
     }
@@ -166,12 +166,12 @@ app.use('/', seoRoutes); // SEO routes for sitemap.xml and robots.txt
 // Vercel Cron endpoint for newsletter (GET - for Vercel cron)
 app.get('/api/cron/newsletter', async (req, res) => {
   try {
-    console.log('🕐 Vercel cron job triggered for newsletter sending at 8:27 AM IST (GET)');
+    // console.log('🕐 Vercel cron job triggered for newsletter sending at 8:27 AM IST (GET)');
 
     // Verify this is a cron request from Vercel
     const userAgent = req.headers['user-agent'] || '';
     if (!userAgent.includes('vercel-cron') && !userAgent.includes('curl')) {
-      console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
+      // console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
     }
 
     const NewsletterScheduler = require('./services/NewsletterScheduler');
@@ -179,7 +179,7 @@ app.get('/api/cron/newsletter', async (req, res) => {
     // Execute the newsletter sending
     const result = await NewsletterScheduler.sendHourlyNewsletters();
 
-    console.log('✅ Cron job completed successfully:', result);
+    // console.log('✅ Cron job completed successfully:', result);
 
     return res.status(200).json({
       success: true,
@@ -203,12 +203,12 @@ app.get('/api/cron/newsletter', async (req, res) => {
 // Vercel Cron endpoint for newsletter (POST - for manual testing)
 app.post('/api/cron/newsletter', async (req, res) => {
   try {
-    console.log('🕐 Vercel cron job triggered for newsletter sending at 8:27 AM IST');
+    // console.log('🕐 Vercel cron job triggered for newsletter sending at 8:27 AM IST');
 
     // Verify this is a cron request from Vercel or allow manual testing
     const userAgent = req.headers['user-agent'] || '';
     if (!userAgent.includes('vercel-cron') && !userAgent.includes('curl')) {
-      console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
+      // console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
     }
 
     const NewsletterScheduler = require('./services/NewsletterScheduler');
@@ -216,7 +216,7 @@ app.post('/api/cron/newsletter', async (req, res) => {
     // Execute the newsletter sending
     const result = await NewsletterScheduler.sendHourlyNewsletters();
 
-    console.log('✅ Cron job completed successfully:', result);
+    // console.log('✅ Cron job completed successfully:', result);
 
     return res.status(200).json({
       success: true,
@@ -239,12 +239,12 @@ app.post('/api/cron/newsletter', async (req, res) => {
 // ✨ Vercel Cron endpoint for section rotation (GET)
 app.get('/api/cron/rotate-sections', async (req, res) => {
   try {
-    console.log('🔄 Vercel cron job triggered for section rotation (GET)');
+    // console.log('🔄 Vercel cron job triggered for section rotation (GET)');
 
     // Verify this is a cron request from Vercel
     const userAgent = req.headers['user-agent'] || '';
     if (!userAgent.includes('vercel-cron') && !userAgent.includes('curl')) {
-      console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
+      // console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
     }
 
     const sectionRotationWorker = require('./workers/sectionRotationWorker');
@@ -277,12 +277,12 @@ app.get('/api/cron/rotate-sections', async (req, res) => {
 // 📝 Vercel Cron endpoint for fill-threshold (GET)
 app.get('/api/cron/fill-threshold', async (req, res) => {
   try {
-    console.log('📝 Vercel cron job triggered for fill-threshold (GET)');
+    // console.log('📝 Vercel cron job triggered for fill-threshold (GET)');
 
     // Verify this is a cron request from Vercel
     const userAgent = req.headers['user-agent'] || '';
     if (!userAgent.includes('vercel-cron') && !userAgent.includes('curl')) {
-      console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
+      // console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
     }
 
     const articleFetcherService = require('./services/db/articleFetcherService');
@@ -318,7 +318,7 @@ app.get('/api/cron/fill-threshold', async (req, res) => {
 
     // Process the section with fewest articles (process 2 articles per cron)
     const sectionToProcess = sectionsNeedingArticles[0].section;
-    console.log(`🎯 Processing section with lowest count: ${sectionToProcess}`);
+    // console.log(`🎯 Processing section with lowest count: ${sectionToProcess}`);
 
     const processedCount = await articleFetcherService.fetchAndProcessSection(sectionToProcess, 2);
 
@@ -489,7 +489,7 @@ let isDbConnected = false;
 // Connect to MongoDB immediately at startup (but don't fail if it doesn't work)
 const initializeDatabase = async () => {
   try {
-    console.log('🔄 Initializing MongoDB connection at startup...');
+    // console.log('🔄 Initializing MongoDB connection at startup...');
 
     // Check if MongoDB URI is available
     if (!process.env.MONGODB_URI) {
@@ -500,7 +500,7 @@ const initializeDatabase = async () => {
 
     const connection = await connectToMongoDB();
     isDbConnected = true;
-    console.log('✅ MongoDB connection established successfully at startup');
+    // console.log('✅ MongoDB connection established successfully at startup');
 
     // Set up connection event listeners to maintain connection
     if (connection) {
@@ -519,7 +519,7 @@ const initializeDatabase = async () => {
         isDbConnected = false;
         // Attempt to reconnect
         setTimeout(() => {
-          console.log('🔄 Attempting to reconnect to MongoDB...');
+          // console.log('🔄 Attempting to reconnect to MongoDB...');
           connectToMongoDB().catch(console.error);
         }, 5000);
       });
@@ -541,7 +541,7 @@ app.use(async (req, res, next) => {
   try {
     // Wait for database connection if not already connected
     if (!isDbConnected && dbConnectionPromise) {
-      console.log('⏳ Waiting for database connection...');
+      // console.log('⏳ Waiting for database connection...');
       await dbConnectionPromise;
     }
     next();
@@ -554,7 +554,7 @@ app.use(async (req, res, next) => {
 
 // Graceful shutdown handling
 process.on('SIGTERM', async () => {
-  console.log('🔄 SIGTERM received, shutting down gracefully...');
+  // console.log('🔄 SIGTERM received, shutting down gracefully...');
   try {
     // Stop BullMQ commentary queue and worker
     const { shutdown } = require('./workers/commentaryQueue');
@@ -568,7 +568,7 @@ process.on('SIGTERM', async () => {
     const redis = require('./config/redis');
     await redis.quit();
 
-    console.log('✅ Graceful shutdown complete');
+    // console.log('✅ Graceful shutdown complete');
   } catch (error) {
     console.error('❌ Error during shutdown:', error);
   }
@@ -576,7 +576,7 @@ process.on('SIGTERM', async () => {
 });
 
 process.on('SIGINT', async () => {
-  console.log('🔄 SIGINT received, shutting down gracefully...');
+  // console.log('🔄 SIGINT received, shutting down gracefully...');
   try {
     // Stop BullMQ commentary queue and worker
     const { shutdown } = require('./workers/commentaryQueue');
@@ -590,7 +590,7 @@ process.on('SIGINT', async () => {
     const redis = require('./config/redis');
     await redis.quit();
 
-    console.log('✅ Graceful shutdown complete');
+    // console.log('✅ Graceful shutdown complete');
   } catch (error) {
     console.error('❌ Error during shutdown:', error);
   }
@@ -603,11 +603,11 @@ dbConnectionPromise
     console.log('✅ Database connected, server ready');
 
     // Start section rotation worker (generates commentary for 1 article per section every 5 min)
-    console.log('🔄 Starting Section Rotation Worker...');
+    // console.log('🔄 Starting Section Rotation Worker...');
     // sectionRotationWorker.start();
 
     // Start keep-alive pinger for Render deployment (prevents auto-sleep after 15 min of inactivity)
-    console.log('💚 Starting Render Keep-Alive Service (pings /health every 12 minutes)...');
+    // console.log('💚 Starting Render Keep-Alive Service (pings /health every 12 minutes)...');
     const startKeepAliveService = () => {
       const keepAliveInterval = setInterval(() => {
         const options = {
@@ -620,7 +620,7 @@ dbConnectionPromise
 
         const req = http.request(options, (res) => {
           if (res.statusCode === 200) {
-            console.log(`💚 Keep-alive ping successful (${new Date().toISOString()})`);
+            // console.log(`💚 Keep-alive ping successful (${new Date().toISOString()})`);
           }
         });
 
@@ -646,7 +646,7 @@ dbConnectionPromise
 
     // Start background fill-threshold worker if running on Render (not Vercel serverless)
     if (process.env.NODE_ENV === 'production' && process.env.RENDER) {
-      console.log('🚀 Starting Background Fill-Threshold Worker (Render environment detected)...');
+      // console.log('🚀 Starting Background Fill-Threshold Worker (Render environment detected)...');
       const startBackgroundWorker = async () => {
         try {
           // Import the fill-threshold logic as a module
@@ -688,7 +688,7 @@ dbConnectionPromise
         console.log(`⚠️ Server running on port ${port} without database connection`);
       });
     } else {
-      console.log('⚠️ Serverless function ready without database connection');
+      // console.log('⚠️ Serverless function ready without database connection');
     }
   });
 

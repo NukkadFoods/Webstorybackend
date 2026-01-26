@@ -15,12 +15,12 @@ class GroqRateLimiter {
       errors: 0,
       avgWaitTime: 0
     };
-    
+
     // Reset tokens every minute
     this.refillInterval = setInterval(() => {
       this.availableTokens = this.tokensPerMinute;
       this.processQueue();
-      console.log(`🔄 Token bucket refilled: ${this.tokensPerMinute} tokens available`);
+      // console.log(`🔄 Token bucket refilled: ${this.tokensPerMinute} tokens available`);
     }, 60000);
 
     // Process queue every 5 seconds
@@ -28,7 +28,7 @@ class GroqRateLimiter {
       this.processQueue();
     }, 5000);
 
-    console.log(`🎯 Groq Rate Limiter initialized with ${this.tokensPerMinute} tokens/minute`);
+    // console.log(`🎯 Groq Rate Limiter initialized with ${this.tokensPerMinute} tokens/minute`);
   }
 
   /**
@@ -36,16 +36,16 @@ class GroqRateLimiter {
    */
   estimateTokens(text, type = 'completion') {
     if (!text) return 50; // Default minimum
-    
+
     const baseTokens = Math.ceil(text.length / 4); // Rough estimation: 4 chars per token
-    
+
     // Add overhead based on request type
     const overhead = {
       'completion': 50,    // Response generation overhead
       'analysis': 30,      // Analysis requests
       'summary': 40        // Summary requests
     };
-    
+
     return baseTokens + (overhead[type] || 50);
   }
 
@@ -79,15 +79,15 @@ class GroqRateLimiter {
     try {
       this.availableTokens -= estimatedTokens;
       this.metrics.tokensUsed += estimatedTokens;
-      
-      console.log(`🚀 Executing immediate request ${requestId}, tokens remaining: ${this.availableTokens}`);
-      
+
+      // console.log(`🚀 Executing immediate request ${requestId}, tokens remaining: ${this.availableTokens}`);
+
       const result = await requestFunction();
-      
+
       this.metrics.requestsCompleted++;
       const duration = Date.now() - startTime;
       this.updateAvgWaitTime(duration);
-      
+
       return {
         success: true,
         data: result,
@@ -97,11 +97,11 @@ class GroqRateLimiter {
       };
     } catch (error) {
       this.metrics.errors++;
-      
+
       // Return tokens if request failed
       this.availableTokens += estimatedTokens;
       this.metrics.tokensUsed -= estimatedTokens;
-      
+
       console.error(`❌ Request ${requestId} failed:`, error.message);
       throw error;
     }
@@ -134,7 +134,7 @@ class GroqRateLimiter {
       }
 
       this.metrics.requestsQueued++;
-      console.log(`⏳ Queued request ${requestId}, queue length: ${this.queue.length}`);
+      // console.log(`⏳ Queued request ${requestId}, queue length: ${this.queue.length}`);
     });
   }
 
@@ -144,11 +144,11 @@ class GroqRateLimiter {
   async processQueue() {
     if (this.queue.length === 0) return;
 
-    console.log(`🔄 Processing queue: ${this.queue.length} requests waiting`);
+    // console.log(`🔄 Processing queue: ${this.queue.length} requests waiting`);
 
     while (this.queue.length > 0 && this.availableTokens > 0) {
       const queueEntry = this.queue[0];
-      
+
       if (this.availableTokens >= queueEntry.estimatedTokens) {
         // Remove from queue
         this.queue.shift();
@@ -180,7 +180,7 @@ class GroqRateLimiter {
     if (index !== -1) {
       const removed = this.queue.splice(index, 1)[0];
       clearTimeout(removed.timeout);
-      console.log(`🗑️ Removed request ${requestId} from queue`);
+      // console.log(`🗑️ Removed request ${requestId} from queue`);
     }
   }
 
@@ -196,7 +196,7 @@ class GroqRateLimiter {
    */
   getStatus() {
     const queuedTokens = this.queue.reduce((sum, entry) => sum + entry.estimatedTokens, 0);
-    
+
     return {
       availableTokens: this.availableTokens,
       queueLength: this.queue.length,
@@ -230,7 +230,7 @@ class GroqRateLimiter {
       entry.reject(new Error('Queue cleared'));
     });
     this.queue = [];
-    console.log('🧹 Queue cleared');
+    // console.log('🧹 Queue cleared');
   }
 
   /**
@@ -244,7 +244,7 @@ class GroqRateLimiter {
       clearInterval(this.processInterval);
     }
     this.clearQueue();
-    console.log('🔥 Groq Rate Limiter destroyed');
+    // console.log('🔥 Groq Rate Limiter destroyed');
   }
 }
 
@@ -260,19 +260,19 @@ const groqRateLimit = (options = {}) => {
   return async (req, res, next) => {
     // Add rate limiter to request object
     req.groqRateLimiter = groqRateLimiter;
-    
+
     // Add helper function for making Groq requests
     req.executeGroqRequest = async (requestFunction, requestOptions = {}) => {
       const text = requestOptions.text || req.body?.text || '';
       const estimatedTokens = groqRateLimiter.estimateTokens(text, requestOptions.type);
-      
+
       return groqRateLimiter.executeRequest(requestFunction, {
         estimatedTokens,
         priority: requestOptions.priority || 'normal',
         timeout: requestOptions.timeout || 30000
       });
     };
-    
+
     next();
   };
 };
@@ -291,12 +291,12 @@ const createStatusRoute = () => {
 
 // Handle graceful shutdown
 process.on('SIGINT', () => {
-  console.log('🛑 Shutting down Groq Rate Limiter...');
+  // console.log('🛑 Shutting down Groq Rate Limiter...');
   groqRateLimiter.destroy();
 });
 
 process.on('SIGTERM', () => {
-  console.log('🛑 Shutting down Groq Rate Limiter...');
+  // console.log('🛑 Shutting down Groq Rate Limiter...');
   groqRateLimiter.destroy();
 });
 

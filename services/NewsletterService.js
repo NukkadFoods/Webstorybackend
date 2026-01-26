@@ -12,16 +12,16 @@ class NewsletterService {
         pass: process.env.EMAIL_APP_PASSWORD // App password from Gmail 2FA
       }
     });
-    
+
     // Verify connection configuration
     this.transporter.verify((error, success) => {
       if (error) {
         console.error('❌ Email transporter error:', error);
       } else if (success) {
-        console.log('✅ Email transporter is ready to send emails');
+        // console.log('✅ Email transporter is ready to send emails');
       }
     });
-    
+
     // Domain-specific reporters
     this.aiReporters = [
       { name: 'James Wilson', title: 'Senior Political Reporter', location: 'Forexyy Newsletter, Washington DC', section: 'politics', expertise: 'Congressional Affairs & Federal Policy' },
@@ -44,11 +44,11 @@ class NewsletterService {
   getReporterForSection(section) {
     const normalizedSection = section ? section.toLowerCase() : 'general';
     const sectionReporters = this.aiReporters.filter(r => r.section === normalizedSection);
-    
+
     if (sectionReporters.length > 0) {
       return sectionReporters[Math.floor(Math.random() * sectionReporters.length)];
     }
-    
+
     // Fallback to general reporter
     return this.aiReporters.find(r => r.section === 'general') || this.aiReporters[0];
   }
@@ -66,11 +66,11 @@ class NewsletterService {
       month: 'long',
       day: 'numeric'
     });
-    
+
     // Add unique timestamp and ID to prevent email threading
     const timestamp = new Date().toLocaleString('en-US', {
       weekday: 'short',
-      month: 'short', 
+      month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
@@ -81,7 +81,7 @@ class NewsletterService {
     const featuredArticle = articles[0];
     const primarySection = subscriber.preferences?.genres?.[0] || 'business';
     const leadReporter = this.getReporterForSection(primarySection);
-    
+
     return `
     <!DOCTYPE html>
     <html lang="en">
@@ -152,10 +152,10 @@ class NewsletterService {
     <body>
         <!-- Preview Text for Email Clients -->
         <div class="preview-text">
-            ${featuredArticle ? 
-                `🔥 ${featuredArticle.title.substring(0, 100)}... Expert analysis inside. Don't miss this breaking update from Forexyy's professional team.` :
-                '🔥 Breaking market analysis and expert insights from Forexyy\'s professional team. Critical updates you need to know today.'
-            }
+            ${featuredArticle ?
+        `🔥 ${featuredArticle.title.substring(0, 100)}... Expert analysis inside. Don't miss this breaking update from Forexyy's professional team.` :
+        '🔥 Breaking market analysis and expert insights from Forexyy\'s professional team. Critical updates you need to know today.'
+      }
             <!-- Hide rest of email from preview -->
             &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847; &#847;
         </div>
@@ -253,55 +253,55 @@ class NewsletterService {
     `;
   }
 
-    // Send newsletter to a single subscriber
+  // Send newsletter to a single subscriber
   async sendNewsletterToSubscriber(subscriber) {
     try {
-      console.log(`📧 Preparing newsletter for ${subscriber.email}`);
-      
+      // console.log(`📧 Preparing newsletter for ${subscriber.email}`);
+
       // Get fresh articles for this subscriber
       const articles = await this.getFreshArticles(subscriber);
-      
+
       if (articles.length === 0) {
-        console.log(`⚠️ No new articles found for ${subscriber.email}, skipping...`);
-        console.log(`📊 Subscriber preferences:`, subscriber.preferences?.genres || 'none');
-        console.log(`📊 Recent sent articles count:`, subscriber.sentArticleIds?.length || 0);
+        // console.log(`⚠️ No new articles found for ${subscriber.email}, skipping...`);
+        // console.log(`📊 Subscriber preferences:`, subscriber.preferences?.genres || 'none');
+        // console.log(`📊 Recent sent articles count:`, subscriber.sentArticleIds?.length || 0);
         return { success: false, reason: 'No new articles available' };
       }
-      
-      console.log(`✅ Found ${articles.length} articles for ${subscriber.email}:`, articles.map(a => a.title?.substring(0, 50) + '...'));
-      
+
+      // console.log(`✅ Found ${articles.length} articles for ${subscriber.email}:`, articles.map(a => a.title?.substring(0, 50) + '...'));
+
       // Generate newsletter HTML
       const newsletterHtml = this.generateNewsletterTemplate(articles, subscriber);
-      
+
       // Create unique message ID to prevent duplicates and threading
       const timestamp = Date.now();
       const randomId = Math.random().toString(36).substring(2, 15);
       const messageId = `newsletter-${timestamp}-${randomId}@forexyy.com`;
-      
+
       // Generate compelling subject with featured headline
       const dateStr = new Date().toLocaleDateString('en-US', {
         weekday: 'short',
-        month: 'short', 
+        month: 'short',
         day: 'numeric'
       });
-      
+
       // Use the featured article headline for urgency and appeal
       const featuredArticle = articles[0];
       let headlinePreview = '';
-      
+
       if (featuredArticle && featuredArticle.title) {
         // Truncate headline if too long for subject line
         const maxHeadlineLength = 60;
-        headlinePreview = featuredArticle.title.length > maxHeadlineLength 
+        headlinePreview = featuredArticle.title.length > maxHeadlineLength
           ? featuredArticle.title.substring(0, maxHeadlineLength) + '...'
           : featuredArticle.title;
       }
-      
+
       // Create compelling subject line with headline and Forexyy branding
-      const uniqueSubject = headlinePreview 
+      const uniqueSubject = headlinePreview
         ? `� ${headlinePreview} | Forexyy ${dateStr}`
         : `📈 Breaking: Market Analysis & Insights | Forexyy ${dateStr}`;
-      
+
       const mailOptions = {
         from: `"Forexyy Breaking News" <${process.env.GMAIL_USER}>`,
         to: subscriber.email,
@@ -331,7 +331,7 @@ class NewsletterService {
       let info;
       try {
         info = await this.transporter.sendMail(mailOptions);
-        console.log(`✅ Newsletter sent to ${subscriber.email}:`, info.messageId);
+        // console.log(`✅ Newsletter sent to ${subscriber.email}:`, info.messageId);
       } catch (sendError) {
         console.error(`❌ SMTP Error for ${subscriber.email}:`, {
           message: sendError.message,
@@ -340,21 +340,21 @@ class NewsletterService {
         });
         throw sendError;
       }
-      
+
       // Update subscriber's sent articles list and newsletter history
       try {
         if (subscriber._id) {
           const Subscriber = require('../models/Subscriber');
           const articleIds = articles.map(article => article.id);
-          
+
           // Generate unique newsletter ID
           const newsletterId = `newsletter_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-          
+
           await Subscriber.findByIdAndUpdate(
             subscriber._id,
-            { 
-              $addToSet: { 
-                sentArticleIds: { $each: articleIds } 
+            {
+              $addToSet: {
+                sentArticleIds: { $each: articleIds }
               },
               $push: {
                 newsletterHistory: {
@@ -367,33 +367,33 @@ class NewsletterService {
               lastNewsletterSent: new Date()
             }
           );
-          
-          console.log(`📝 Updated sent articles and newsletter history for ${subscriber.email}: Newsletter ID ${newsletterId}, ${articleIds.length} articles tracked`);
+
+          // console.log(`📝 Updated sent articles and newsletter history for ${subscriber.email}: Newsletter ID ${newsletterId}, ${articleIds.length} articles tracked`);
         }
       } catch (updateError) {
         console.error(`⚠️ Failed to update sent articles for ${subscriber.email}:`, updateError.message);
         // Don't fail the newsletter send if tracking update fails
       }
 
-      return { 
-        success: true, 
+      return {
+        success: true,
         messageId: info.messageId,
         articlesCount: articles.length,
         articles: articles // Include articles in response for tracking
       };
-      
+
     } catch (error) {
       console.error(`❌ Failed to send newsletter to ${subscriber.email}:`, error);
-      
+
       // Track failed newsletter attempt
       try {
         if (subscriber._id) {
           const Subscriber = require('../models/Subscriber');
           const newsletterId = `newsletter_failed_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-          
+
           await Subscriber.findByIdAndUpdate(
             subscriber._id,
-            { 
+            {
               $push: {
                 newsletterHistory: {
                   newsletterId: newsletterId,
@@ -405,16 +405,16 @@ class NewsletterService {
               }
             }
           );
-          
-          console.log(`📝 Tracked failed newsletter attempt for ${subscriber.email}: Newsletter ID ${newsletterId}`);
+
+          // console.log(`📝 Tracked failed newsletter attempt for ${subscriber.email}: Newsletter ID ${newsletterId}`);
         }
       } catch (trackError) {
         console.error(`⚠️ Failed to track error for ${subscriber.email}:`, trackError.message);
       }
-      
-      return { 
-        success: false, 
-        error: error.message 
+
+      return {
+        success: false,
+        error: error.message
       };
     }
   }
@@ -424,20 +424,20 @@ class NewsletterService {
     try {
       // Import database articleService for direct database queries
       const dbArticleService = require('./db/articleService');
-      
+
       // Get subscriber's preferred categories or use defaults
       const preferredCategories = subscriber.preferences?.genres || ['business', 'politics', 'technology'];
-      
+
       // Get fresh articles from the last 24 hours
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
       let articles = [];
-      
+
       // Fetch articles from each preferred category using database service
       for (const category of preferredCategories) {
         try {
-          console.log(`📰 Fetching articles for category: ${category}`);
+          // console.log(`📰 Fetching articles for category: ${category}`);
           const categoryArticles = await dbArticleService.getArticlesBySection(category, 10);
-          
+
           // Filter out articles already sent to this subscriber (only check last 50 sent articles to allow re-sending older content)
           const newArticles = categoryArticles.filter(article => {
             if (!subscriber.sentArticleIds || !Array.isArray(subscriber.sentArticleIds)) {
@@ -447,20 +447,20 @@ class NewsletterService {
             const recentSentIds = subscriber.sentArticleIds.slice(-50);
             return !recentSentIds.includes(article.id || article._id);
           });
-          
-          console.log(`📰 Found ${newArticles.length} new articles in ${category} (filtered out ${categoryArticles.length - newArticles.length} recent articles)`);
+
+          // console.log(`📰 Found ${newArticles.length} new articles in ${category} (filtered out ${categoryArticles.length - newArticles.length} recent articles)`);
           articles = articles.concat(newArticles);
-          
+
           if (articles.length >= limit * 2) break; // Get extra articles for selection
         } catch (categoryError) {
-          console.log(`⚠️ Could not fetch articles for category ${category}:`, categoryError.message);
+          // console.log(`⚠️ Could not fetch articles for category ${category}:`, categoryError.message);
         }
       }
-      
+
       // If we don't have enough articles from preferred categories, get general news
       if (articles.length < limit) {
         try {
-          console.log(`📰 Fetching general articles (current count: ${articles.length})`);
+          // console.log(`📰 Fetching general articles (current count: ${articles.length})`);
           const generalArticles = await dbArticleService.getAllArticles(10, 0);
           const newGeneralArticles = generalArticles.filter(article => {
             if (!subscriber.sentArticleIds || !Array.isArray(subscriber.sentArticleIds)) {
@@ -470,32 +470,32 @@ class NewsletterService {
             const recentSentIds = subscriber.sentArticleIds.slice(-50);
             return !recentSentIds.includes(article.id || article._id);
           });
-          console.log(`📰 Found ${newGeneralArticles.length} new general articles`);
+          // console.log(`📰 Found ${newGeneralArticles.length} new general articles`);
           articles = articles.concat(newGeneralArticles);
         } catch (generalError) {
-          console.log('⚠️ Could not fetch general articles:', generalError.message);
+          // console.log('⚠️ Could not fetch general articles:', generalError.message);
         }
       }
-      
+
       // Remove duplicates based on article ID
-      const uniqueArticles = articles.filter((article, index, self) => 
+      const uniqueArticles = articles.filter((article, index, self) =>
         index === self.findIndex(a => (a.id || a._id) === (article.id || article._id))
       );
-      
-      console.log(`📰 Found ${uniqueArticles.length} unique fresh articles for ${subscriber.email} (filtered out ${subscriber.sentArticleIds?.length || 0} recent articles)`);
-      
+
+      // console.log(`📰 Found ${uniqueArticles.length} unique fresh articles for ${subscriber.email} (filtered out ${subscriber.sentArticleIds?.length || 0} recent articles)`);
+
       // Sort by publication date (newest first) and return requested number
       const selectedArticles = uniqueArticles
         .sort((a, b) => new Date(b.publishedDate || b.publishedAt || b.published_date) - new Date(a.publishedDate || a.publishedAt || a.published_date))
         .slice(0, limit);
-        
+
       return selectedArticles;
-        
+
     } catch (error) {
       console.error('❌ Error fetching fresh articles:', error);
-      
+
       // Fallback: return sample articles if real article service fails
-      console.log('🔄 Using fallback sample articles');
+      // console.log('🔄 Using fallback sample articles');
       const fallbackArticles = [
         {
           id: `fallback-${Date.now()}-1`,
@@ -511,7 +511,7 @@ class NewsletterService {
           title: "Technology Sector Update: Innovation and Investment Trends",
           summary: "Latest developments in technology markets with insights into emerging trends and investment opportunities.",
           abstract: "Expert analysis of technology sector performance and future outlook for investors.",
-          section: "technology", 
+          section: "technology",
           publishedDate: new Date().toISOString(),
           source: "Forexyy Analysis Team"
         },
@@ -525,24 +525,24 @@ class NewsletterService {
           source: "Forexyy Analysis Team"
         }
       ];
-      
+
       return fallbackArticles.slice(0, limit);
     }
-  }  async sendScheduledNewsletter() {
+  } async sendScheduledNewsletter() {
     try {
       // Get all active subscribers
       const subscribers = await Subscriber.find({ isActive: true });
-      console.log(`📧 Starting newsletter send to ${subscribers.length} subscribers`);
+      // console.log(`📧 Starting newsletter send to ${subscribers.length} subscribers`);
 
       const results = [];
       for (const subscriber of subscribers) {
         // Get fresh articles for this subscriber
         const articles = await this.getFreshArticles(subscriber, 4);
-        
+
         if (articles.length > 0) {
           const result = await this.sendNewsletterToSubscriber(subscriber, articles);
           results.push({ subscriber: subscriber.email, ...result });
-          
+
           // Add small delay between sends to avoid rate limiting
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
@@ -550,8 +550,8 @@ class NewsletterService {
 
       const successful = results.filter(r => r.success).length;
       const failed = results.filter(r => !r.success).length;
-      
-      console.log(`📈 Newsletter batch complete: ${successful} sent, ${failed} failed`);
+
+      // console.log(`📈 Newsletter batch complete: ${successful} sent, ${failed} failed`);
       return { successful, failed, results };
     } catch (error) {
       console.error('❌ Error sending scheduled newsletter:', error);

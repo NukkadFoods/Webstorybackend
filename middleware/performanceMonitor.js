@@ -38,7 +38,7 @@ class PerformanceMonitor {
         cpuUsage: process.cpuUsage()
       }
     };
-    
+
     this.alerts = [];
     this.thresholds = {
       slowRequest: 1000,     // 1 second
@@ -47,10 +47,10 @@ class PerformanceMonitor {
       highMemoryUsage: 0.95, // 95% (increased from 90%)
       slowDbQuery: 500       // 500ms
     };
-    
+
     // Start monitoring
     this.startSystemMonitoring();
-    console.log('📊 Performance monitoring initialized');
+    // console.log('📊 Performance monitoring initialized');
   }
 
   /**
@@ -58,7 +58,7 @@ class PerformanceMonitor {
    */
   trackAPIRequest(req, res, duration, error = null) {
     const endpoint = this.normalizeEndpoint(req.path);
-    
+
     // Initialize endpoint metrics if not exists
     if (!this.metrics.api.endpoints[endpoint]) {
       this.metrics.api.endpoints[endpoint] = {
@@ -68,9 +68,9 @@ class PerformanceMonitor {
         slowRequests: 0
       };
     }
-    
+
     const endpointMetrics = this.metrics.api.endpoints[endpoint];
-    
+
     // Update overall API metrics
     this.metrics.api.totalRequests++;
     this.metrics.api.avgResponseTime = this.updateAverage(
@@ -78,7 +78,7 @@ class PerformanceMonitor {
       duration,
       this.metrics.api.totalRequests
     );
-    
+
     // Update endpoint metrics
     endpointMetrics.requests++;
     endpointMetrics.avgResponseTime = this.updateAverage(
@@ -86,20 +86,20 @@ class PerformanceMonitor {
       duration,
       endpointMetrics.requests
     );
-    
+
     // Track slow requests
     if (duration > this.thresholds.slowRequest) {
       this.metrics.api.slowRequests++;
       endpointMetrics.slowRequests++;
-      
+
       this.addAlert('warning', `Slow API request: ${endpoint} took ${duration}ms`);
     }
-    
+
     // Track errors
     if (error) {
       endpointMetrics.errors++;
       this.metrics.api.errorRate = this.calculateErrorRate();
-      
+
       this.addAlert('error', `API error in ${endpoint}: ${error.message}`);
     }
   }
@@ -113,10 +113,10 @@ class PerformanceMonitor {
     } else {
       this.metrics.cache.misses++;
     }
-    
+
     const totalCacheRequests = this.metrics.cache.hits + this.metrics.cache.misses;
     this.metrics.cache.hitRate = this.metrics.cache.hits / totalCacheRequests;
-    
+
     if (duration > 0) {
       this.metrics.cache.avgResponseTime = this.updateAverage(
         this.metrics.cache.avgResponseTime,
@@ -124,7 +124,7 @@ class PerformanceMonitor {
         totalCacheRequests
       );
     }
-    
+
     // Alert on low cache hit rate
     if (this.metrics.cache.hitRate < this.thresholds.lowCacheHitRate && totalCacheRequests > 100) {
       this.addAlert('warning', `Low cache hit rate: ${(this.metrics.cache.hitRate * 100).toFixed(2)}%`);
@@ -136,14 +136,14 @@ class PerformanceMonitor {
    */
   trackGroqUsage(tokensUsed, waitTime = 0, error = null) {
     this.metrics.groq.tokensUsed += tokensUsed;
-    
+
     if (error) {
       this.metrics.groq.errors++;
       this.addAlert('error', `Groq API error: ${error.message}`);
     } else {
       this.metrics.groq.requestsCompleted++;
     }
-    
+
     if (waitTime > 0) {
       this.metrics.groq.avgWaitTime = this.updateAverage(
         this.metrics.groq.avgWaitTime,
@@ -151,7 +151,7 @@ class PerformanceMonitor {
         this.metrics.groq.requestsCompleted
       );
     }
-    
+
     // Alert on high token usage
     if (this.metrics.groq.tokensUsed > 5000) { // Approaching 6000 limit
       this.addAlert('warning', `High Groq token usage: ${this.metrics.groq.tokensUsed}/6000`);
@@ -168,12 +168,12 @@ class PerformanceMonitor {
       duration,
       this.metrics.database.connections
     );
-    
+
     if (duration > this.thresholds.slowDbQuery) {
       this.metrics.database.slowQueries++;
       this.addAlert('warning', `Slow database query: ${duration}ms`);
     }
-    
+
     if (error) {
       this.metrics.database.errors++;
       this.addAlert('error', `Database error: ${error.message}`);
@@ -189,23 +189,23 @@ class PerformanceMonitor {
       this.metrics.system.uptime = process.uptime();
       this.metrics.system.memoryUsage = process.memoryUsage();
       this.metrics.system.cpuUsage = process.cpuUsage();
-      
+
       // Check memory usage
       const memUsagePercent = this.metrics.system.memoryUsage.heapUsed / this.metrics.system.memoryUsage.heapTotal;
       if (memUsagePercent > this.thresholds.highMemoryUsage) {
         this.addAlert('warning', `High memory usage: ${(memUsagePercent * 100).toFixed(2)}%`);
-        
+
         // Suggest garbage collection for very high usage
         if (memUsagePercent > 0.98 && global.gc) {
           try {
             global.gc();
-            console.log('🧹 Performed garbage collection due to high memory usage');
+            // console.log('🧹 Performed garbage collection due to high memory usage');
           } catch (e) {
-            console.log('💡 Consider running with --expose-gc flag for automatic garbage collection');
+            // console.log('💡 Consider running with --expose-gc flag for automatic garbage collection');
           }
         }
       }
-      
+
       // Clean old alerts (keep last 100)
       if (this.alerts.length > 100) {
         this.alerts = this.alerts.slice(-100);
@@ -223,9 +223,9 @@ class PerformanceMonitor {
       timestamp: new Date().toISOString(),
       id: Date.now() + Math.random()
     };
-    
+
     this.alerts.unshift(alert);
-    
+
     // Log critical alerts
     if (level === 'error') {
       console.error(`🚨 ALERT: ${message}`);
@@ -258,20 +258,20 @@ class PerformanceMonitor {
    */
   getHealthStatus() {
     const issues = [];
-    
+
     if (this.metrics.api.errorRate > this.thresholds.highErrorRate) {
       issues.push('High API error rate');
     }
-    
+
     if (this.metrics.cache.hitRate < this.thresholds.lowCacheHitRate) {
       issues.push('Low cache hit rate');
     }
-    
+
     const memUsagePercent = this.metrics.system.memoryUsage.heapUsed / this.metrics.system.memoryUsage.heapTotal;
     if (memUsagePercent > this.thresholds.highMemoryUsage) {
       issues.push('High memory usage');
     }
-    
+
     return {
       status: issues.length === 0 ? 'healthy' : 'needs_attention',
       issues,
@@ -284,7 +284,7 @@ class PerformanceMonitor {
    */
   generateRecommendations() {
     const recommendations = [];
-    
+
     // API performance recommendations
     if (this.metrics.api.avgResponseTime > this.thresholds.slowRequest) {
       recommendations.push({
@@ -293,7 +293,7 @@ class PerformanceMonitor {
         priority: 'high'
       });
     }
-    
+
     // Cache recommendations
     if (this.metrics.cache.hitRate < this.thresholds.lowCacheHitRate) {
       recommendations.push({
@@ -302,7 +302,7 @@ class PerformanceMonitor {
         priority: 'medium'
       });
     }
-    
+
     // Database recommendations
     if (this.metrics.database.avgQueryTime > this.thresholds.slowDbQuery) {
       recommendations.push({
@@ -311,7 +311,7 @@ class PerformanceMonitor {
         priority: 'high'
       });
     }
-    
+
     // Groq usage recommendations
     const groqUsagePercent = this.metrics.groq.tokensUsed / 6000;
     if (groqUsagePercent > 0.8) {
@@ -321,7 +321,7 @@ class PerformanceMonitor {
         priority: 'high'
       });
     }
-    
+
     return recommendations;
   }
 
@@ -359,7 +359,7 @@ class PerformanceMonitor {
       system: { uptime: process.uptime(), memoryUsage: process.memoryUsage(), cpuUsage: process.cpuUsage() }
     };
     this.alerts = [];
-    console.log('📊 Performance metrics reset');
+    // console.log('📊 Performance metrics reset');
   }
 }
 
@@ -371,19 +371,19 @@ const performanceMonitor = new PerformanceMonitor();
  */
 const performanceMiddleware = (req, res, next) => {
   const startTime = Date.now();
-  
+
   // Track when response finishes
   res.on('finish', () => {
     const duration = Date.now() - startTime;
     const error = res.statusCode >= 400 ? new Error(`HTTP ${res.statusCode}`) : null;
     performanceMonitor.trackAPIRequest(req, res, duration, error);
   });
-  
+
   // Add performance tracking methods to request
   req.trackCache = (hit, duration) => performanceMonitor.trackCachePerformance(hit, duration);
   req.trackGroq = (tokens, waitTime, error) => performanceMonitor.trackGroqUsage(tokens, waitTime, error);
   req.trackDb = (duration, error) => performanceMonitor.trackDatabaseQuery(duration, error);
-  
+
   next();
 };
 

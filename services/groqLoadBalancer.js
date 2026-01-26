@@ -22,10 +22,10 @@ class GroqLoadBalancer {
       lastError: null,
       resetTime: this.getNextMidnightUTC()
     }));
-    
+
     this.currentIndex = 0;
-    console.log(`🔀 Groq Load Balancer initialized with ${this.clients.length} API keys`);
-    
+    // console.log(`🔀 Groq Load Balancer initialized with ${this.clients.length} API keys`);
+
     // Reset counters at midnight UTC
     this.scheduleReset();
   }
@@ -35,29 +35,29 @@ class GroqLoadBalancer {
    */
   getClient() {
     const startIndex = this.currentIndex;
-    
+
     // Try all clients in round-robin fashion
     do {
       const client = this.clients[this.currentIndex];
-      
+
       // Move to next client for next request (round-robin)
       this.currentIndex = (this.currentIndex + 1) % this.clients.length;
-      
+
       // Check if client is available
       if (client.isAvailable && client.tokensUsed < client.dailyLimit - 5000) {
         return client;
       }
-      
+
       if (!client.isAvailable) {
-        console.log(`⏭️  Key ${client.id} unavailable (${client.lastError}), trying next...`);
+        // console.log(`⏭️  Key ${client.id} unavailable (${client.lastError}), trying next...`);
       } else {
-        console.log(`⏭️  Key ${client.id} near limit (${client.tokensUsed}/${client.dailyLimit}), trying next...`);
+        // console.log(`⏭️  Key ${client.id} near limit (${client.tokensUsed}/${client.dailyLimit}), trying next...`);
       }
-      
+
     } while (this.currentIndex !== startIndex);
-    
+
     // All clients exhausted - return first one and let it fail with proper error
-    console.warn('⚠️  All API keys at capacity or unavailable!');
+    // console.warn('⚠️  All API keys at capacity or unavailable!');
     return this.clients[0];
   }
 
@@ -66,39 +66,39 @@ class GroqLoadBalancer {
    */
   async createChatCompletion(params) {
     const client = this.getClient();
-    
+
     try {
-      console.log(`🔑 Using Groq API Key ${client.id} (${client.tokensUsed}/${client.dailyLimit} tokens used)`);
-      
+      // console.log(`🔑 Using Groq API Key ${client.id} (${client.tokensUsed}/${client.dailyLimit} tokens used)`);
+
       const response = await client.client.chat.completions.create(params);
-      
+
       // Track token usage
       const tokensUsed = response.usage?.total_tokens || 600; // Estimate if not provided
       client.tokensUsed += tokensUsed;
-      
-      console.log(`✅ Key ${client.id} used ${tokensUsed} tokens (Total: ${client.tokensUsed}/${client.dailyLimit})`);
-      
+
+      // console.log(`✅ Key ${client.id} used ${tokensUsed} tokens (Total: ${client.tokensUsed}/${client.dailyLimit})`);
+
       return response;
-      
+
     } catch (error) {
       // Handle rate limit errors
       if (error.status === 429 || error.message?.includes('rate_limit')) {
         console.error(`❌ Key ${client.id} hit rate limit:`, error.message);
         client.isAvailable = false;
         client.lastError = 'Rate limit exceeded';
-        
+
         // Try with next available key
-        console.log('🔄 Retrying with different API key...');
+        // console.log('🔄 Retrying with different API key...');
         const nextClient = this.getClient();
-        
+
         if (nextClient.id !== client.id) {
           return await nextClient.client.chat.completions.create(params);
         }
-        
+
         // All keys exhausted
         throw new Error('RATE_LIMIT_ALL_KEYS: All API keys have hit their rate limits');
       }
-      
+
       throw error;
     }
   }
@@ -110,7 +110,7 @@ class GroqLoadBalancer {
     const totalTokens = this.clients.reduce((sum, c) => sum + c.tokensUsed, 0);
     const totalLimit = this.clients.reduce((sum, c) => sum + c.dailyLimit, 0);
     const availableKeys = this.clients.filter(c => c.isAvailable).length;
-    
+
     return {
       totalKeys: this.clients.length,
       availableKeys,
@@ -151,9 +151,9 @@ class GroqLoadBalancer {
     const now = new Date();
     const midnight = this.getNextMidnightUTC();
     const msUntilMidnight = midnight - now;
-    
-    console.log(`🕐 Token counters will reset at ${midnight.toISOString()}`);
-    
+
+    // console.log(`🕐 Token counters will reset at ${midnight.toISOString()}`);
+
     setTimeout(() => {
       this.resetCounters();
       this.scheduleReset(); // Schedule next reset
@@ -164,14 +164,14 @@ class GroqLoadBalancer {
    * Reset all token counters
    */
   resetCounters() {
-    console.log('🔄 Resetting token counters (new day)...');
+    // console.log('🔄 Resetting token counters (new day)...');
     this.clients.forEach(client => {
       client.tokensUsed = 0;
       client.isAvailable = true;
       client.lastError = null;
       client.resetTime = this.getNextMidnightUTC();
     });
-    console.log('✅ All API keys reset and available');
+    // console.log('✅ All API keys reset and available');
   }
 }
 

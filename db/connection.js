@@ -3,11 +3,11 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
 // Get MongoDB URI from environment variables
-console.log('Environment variables:', {
-  NODE_ENV: process.env.NODE_ENV,
-  MONGODB_URI_EXISTS: !!process.env.MONGODB_URI,
-  ENV_PATH: path.resolve(__dirname, '../.env')
-});
+// console.log('Environment variables:', {
+//   NODE_ENV: process.env.NODE_ENV,
+//   MONGODB_URI_EXISTS: !!process.env.MONGODB_URI,
+//   ENV_PATH: path.resolve(__dirname, '../.env')
+// });
 
 const MONGODB_URI = process.env.MONGODB_URI;
 
@@ -36,11 +36,11 @@ const connectToMongoDB = async () => {
     try {
       // First verify if we can resolve the hostname
       const url = new URL(MONGODB_URI);
-      console.log('Attempting to connect to MongoDB at:', url.hostname);
-      
+      // console.log('Attempting to connect to MongoDB at:', url.hostname);
+
       connection = await mongoose.connect(MONGODB_URI, options);
       console.log('Successfully connected to MongoDB Atlas');
-      
+
       // Handle connection events
       mongoose.connection.on('error', (error) => {
         console.error('MongoDB connection error:', error);
@@ -93,7 +93,7 @@ const disconnectFromMongoDB = async () => {
   if (connection) {
     await mongoose.disconnect();
     connection = null;
-    console.log('Disconnected from MongoDB');
+    // console.log('Disconnected from MongoDB');
   }
 };
 

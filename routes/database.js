@@ -38,24 +38,24 @@ router.get('/report', async (req, res) => {
 // POST /api/database/cleanup - Run database cleanup (with dry-run option)
 router.post('/cleanup', async (req, res) => {
   try {
-    const { 
-      dryRun = true, 
+    const {
+      dryRun = true,
       keepDays = 30,
       cleanupPercentage = 5,
       method = 'percentage' // 'percentage' for oldest 5%, 'days' for date-based
     } = req.body;
-    
-    console.log('🔍 Cleanup route called with:', { method, cleanupPercentage, dryRun });
-    
+
+    // console.log('🔍 Cleanup route called with:', { method, cleanupPercentage, dryRun });
+
     let result;
-    
+
     if (method === 'percentage') {
       // Clean oldest articles by insertion order
       const [duplicateResult, oldestResult] = await Promise.all([
         DatabaseMonitor.removeDuplicates(dryRun),
         DatabaseMonitor.cleanupOldestArticles({ cleanupPercentage, dryRun })
       ]);
-      
+
       result = {
         timestamp: new Date().toISOString(),
         method: 'percentage',
@@ -69,7 +69,7 @@ router.post('/cleanup', async (req, res) => {
         DatabaseMonitor.removeDuplicates(dryRun),
         DatabaseMonitor.cleanupOldArticles({ keepDays, dryRun })
       ]);
-      
+
       result = {
         timestamp: new Date().toISOString(),
         method: 'days',
@@ -78,13 +78,13 @@ router.post('/cleanup', async (req, res) => {
         oldArticles: oldArticleResult
       };
     }
-    
+
     if (!dryRun) {
       // Also optimize indexes if actually cleaning
       await DatabaseMonitor.optimizeIndexes();
       result.indexesOptimized = true;
     }
-    
+
     res.json(result);
   } catch (error) {
     console.error('Failed to run cleanup:', error);
@@ -97,7 +97,7 @@ router.get('/health', async (req, res) => {
   try {
     const stats = await DatabaseMonitor.getDatabaseStats();
     const articleStats = await DatabaseMonitor.getArticleStats();
-    
+
     const health = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
@@ -113,7 +113,7 @@ router.get('/health', async (req, res) => {
       },
       alerts: []
     };
-    
+
     // Add health alerts
     if (health.storage.usagePercentage > 90) {
       health.status = 'critical';
@@ -122,15 +122,15 @@ router.get('/health', async (req, res) => {
       health.status = 'warning';
       health.alerts.push('Database storage usage above 75%');
     }
-    
+
     if (health.articles.total > 3000) {
       health.alerts.push('High article count - consider cleanup');
     }
-    
+
     res.json(health);
   } catch (error) {
     console.error('Failed to get database health:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
       error: 'Failed to get database health',
       timestamp: new Date().toISOString()

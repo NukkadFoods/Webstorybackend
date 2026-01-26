@@ -6,7 +6,7 @@ let Article;
 try {
   Article = require('../models/article');
 } catch (error) {
-  console.log('Article model not available, using static sitemap');
+  // console.log('Article model not available, using static sitemap');
   Article = null;
 }
 
@@ -18,13 +18,13 @@ router.get('/sitemap.xml', async (req, res) => {
   try {
     const baseUrl = 'https://forexyy.com';
     const currentDate = new Date().toISOString().split('T')[0];
-    
+
     // Static pages and categories
     const staticUrls = [
       { loc: '/', priority: '1.0', changefreq: 'hourly' },
       { loc: '/articles', priority: '0.8', changefreq: 'hourly' },
       { loc: '/search', priority: '0.6', changefreq: 'weekly' },
-      
+
       // Category pages
       { loc: '/category/politics', priority: '0.9', changefreq: 'daily' },
       { loc: '/category/business', priority: '0.9', changefreq: 'daily' },
@@ -72,24 +72,24 @@ router.get('/sitemap.xml', async (req, res) => {
           .sort({ publishedDate: -1, createdAt: -1 })
           .limit(1000)
           .select('title url section publishedDate createdAt keywords abstract');
-        
-        console.log(`Found ${recentArticles.length} articles for sitemap`);
-        
+
+        // console.log(`Found ${recentArticles.length} articles for sitemap`);
+
         recentArticles.forEach(article => {
           // Create SEO-friendly slug from URL or title
-          const slug = article.url ? 
-            article.url.split('/').pop().replace(/\.html?$/, '') : 
+          const slug = article.url ?
+            article.url.split('/').pop().replace(/\.html?$/, '') :
             article.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-          
+
           // Use published date or creation date
           const articleDate = article.publishedDate || article.createdAt;
           const formattedDate = articleDate.toISOString().split('T')[0];
-          
+
           // Extract keywords for news schema
-          const articleKeywords = article.keywords && article.keywords.length > 0 ? 
-            article.keywords.join(', ') : 
+          const articleKeywords = article.keywords && article.keywords.length > 0 ?
+            article.keywords.join(', ') :
             `${article.section || 'news'}, breaking news, ${article.title.split(' ').slice(0, 3).join(', ')}`;
-          
+
           xml += `  <url>
     <loc>${baseUrl}/article/${slug}</loc>
     <lastmod>${formattedDate}</lastmod>
@@ -109,42 +109,42 @@ router.get('/sitemap.xml', async (req, res) => {
         });
 
       } catch (dbError) {
-        console.log('Database query failed, using static samples:', dbError.message);
+        // console.log('Database query failed, using static samples:', dbError.message);
       }
     }
-    
+
     // Always add some sample articles for demonstration and fallback
     const sampleArticles = [
-      { 
-        slug: 'breaking-news-politics-update', 
+      {
+        slug: 'breaking-news-politics-update',
         title: 'Breaking News: Politics Update',
         category: 'politics',
         date: currentDate,
         keywords: 'politics, breaking news, government, policy'
       },
-      { 
-        slug: 'stock-market-analysis-today', 
+      {
+        slug: 'stock-market-analysis-today',
         title: 'Stock Market Analysis Today',
         category: 'finance',
         date: currentDate,
         keywords: 'finance, stocks, market, trading, investment'
       },
-      { 
-        slug: 'technology-innovation-ai-breakthrough', 
+      {
+        slug: 'technology-innovation-ai-breakthrough',
         title: 'Technology Innovation: AI Breakthrough',
         category: 'technology',
         date: currentDate,
         keywords: 'technology, AI, innovation, artificial intelligence'
       },
-      { 
-        slug: 'wall-street-trading-update', 
+      {
+        slug: 'wall-street-trading-update',
         title: 'Wall Street Trading Update',
         category: 'wallstreet',
         date: currentDate,
         keywords: 'wall street, trading, finance, stocks'
       },
-      { 
-        slug: 'healthcare-policy-changes', 
+      {
+        slug: 'healthcare-policy-changes',
         title: 'Healthcare Policy Changes',
         category: 'health',
         date: currentDate,

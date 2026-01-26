@@ -18,26 +18,26 @@ try {
       connectTimeout: 1000,
       commandTimeout: 800
     });
-    
+
     redisClient.on('error', (err) => {
-      console.log('Redis connection error (falling back to memory cache):', err.message);
+      // console.log('Redis connection error (falling back to memory cache):', err.message);
       redisClient = null;
     });
-    
+
     redisClient.on('connect', () => {
-      console.log('✅ Redis cache connected');
+      // console.log('✅ Redis cache connected');
     });
   } else {
-    console.log('📦 Redis not configured, using memory cache only');
+    // console.log('📦 Redis not configured, using memory cache only');
     redisClient = null;
   }
 } catch (error) {
-  console.log('📦 Redis not available, using memory cache only');
+  // console.log('📦 Redis not available, using memory cache only');
   redisClient = null;
 }
 
 // L1: Ultra-fast in-memory cache with memory management
-const memoryCache = new NodeCache({ 
+const memoryCache = new NodeCache({
   stdTTL: 300, // 5 minutes default
   checkperiod: 60, // Check expired keys every minute
   useClones: false, // Better performance
@@ -61,21 +61,21 @@ class AdvancedCache {
    */
   async initialize() {
     try {
-      console.log('🚀 Initializing advanced cache system...');
-      
+      // console.log('🚀 Initializing advanced cache system...');
+
       // Test Redis connection if available
       if (redisClient) {
         try {
           await redisClient.ping();
-          console.log('✅ Redis cache ready');
+          // console.log('✅ Redis cache ready');
         } catch (error) {
-          console.log('📦 Redis unavailable, using memory cache only');
+          // console.log('📦 Redis unavailable, using memory cache only');
           redisClient = null;
         }
       } else {
-        console.log('📦 Using memory cache only (Redis not configured)');
+        // console.log('📦 Using memory cache only (Redis not configured)');
       }
-      
+
       return this;
     } catch (error) {
       console.warn('⚠️ Cache initialization warning:', error.message);
@@ -101,16 +101,16 @@ class AdvancedCache {
       if (memoryData) {
         this.hitCount++;
         this.metrics.hits++;
-        
+
         // Check if data is approaching expiration
         const age = Date.now() - memoryData.timestamp;
         const isStale = age > (ttl - staleTime) * 1000;
-        
+
         if (isStale && priority !== 'low') {
           // Background refresh for stale data
           this.backgroundRefresh(key, fetchFunction, ttl);
         }
-        
+
         this.updateMetrics(start);
         return memoryData.data;
       }
@@ -121,20 +121,20 @@ class AdvancedCache {
           const redisData = await redisClient.get(key);
           if (redisData) {
             const parsedData = JSON.parse(redisData);
-            
+
             // Store in memory for next time
             memoryCache.set(key, {
               data: parsedData.data,
               timestamp: parsedData.timestamp
             }, ttl);
-            
+
             this.hitCount++;
             this.metrics.hits++;
             this.updateMetrics(start);
             return parsedData.data;
           }
         } catch (redisError) {
-          console.log('Redis get error:', redisError.message);
+          // console.log('Redis get error:', redisError.message);
           this.metrics.errors++;
         }
       }
@@ -142,7 +142,7 @@ class AdvancedCache {
       // Cache miss - fetch fresh data
       this.missCount++;
       this.metrics.misses++;
-      
+
       const freshData = await this.refreshCache(key, fetchFunction, ttl);
       this.updateMetrics(start);
       return freshData;
@@ -150,7 +150,7 @@ class AdvancedCache {
     } catch (error) {
       console.error('Cache error for key:', key, error.message);
       this.metrics.errors++;
-      
+
       // Fallback to direct fetch
       try {
         return await fetchFunction();
@@ -167,13 +167,13 @@ class AdvancedCache {
   async refreshCache(key, fetchFunction, ttl) {
     try {
       const freshData = await fetchFunction();
-      
+
       // 🔧 FIX: Don't cache empty arrays for articles - they might be errors
       if (key.includes('articles') && Array.isArray(freshData) && freshData.length === 0) {
         console.warn(`⚠️ Not caching empty articles result for key: ${key}`);
         return freshData; // Return but don't cache
       }
-      
+
       const cacheEntry = {
         data: freshData,
         timestamp: Date.now()
@@ -187,7 +187,7 @@ class AdvancedCache {
         try {
           await redisClient.setex(key, ttl, JSON.stringify(cacheEntry));
         } catch (redisError) {
-          console.log('Redis set error:', redisError.message);
+          // console.log('Redis set error:', redisError.message);
         }
       }
 
@@ -206,7 +206,7 @@ class AdvancedCache {
     setTimeout(async () => {
       try {
         await this.refreshCache(key, fetchFunction, ttl);
-        console.log(`Background refresh completed for key: ${key}`);
+        // console.log(`Background refresh completed for key: ${key}`);
       } catch (error) {
         console.error(`Background refresh failed for key: ${key}`, error.message);
       }
@@ -219,7 +219,7 @@ class AdvancedCache {
   getStats() {
     const total = this.hitCount + this.missCount;
     const hitRate = total > 0 ? (this.hitCount / total * 100).toFixed(2) : 0;
-    
+
     return {
       hits: this.hitCount,
       misses: this.missCount,
@@ -235,15 +235,15 @@ class AdvancedCache {
    */
   async clearAll() {
     memoryCache.flushAll();
-    
+
     if (redisClient) {
       try {
         await redisClient.flushall();
       } catch (error) {
-        console.log('Redis clear error:', error.message);
+        // console.log('Redis clear error:', error.message);
       }
     }
-    
+
     this.hitCount = 0;
     this.missCount = 0;
     this.metrics = {
@@ -252,8 +252,8 @@ class AdvancedCache {
       errors: 0,
       avgResponseTime: 0
     };
-    
-    console.log('🧹 All caches cleared');
+
+    // console.log('🧹 All caches cleared');
   }
 
   /**
@@ -265,20 +265,20 @@ class AdvancedCache {
     for (const key of memoryKeys) {
       if (key.includes(pattern)) {
         memoryCache.del(key);
-        console.log(`🧹 Cleared memory cache for key: ${key}`);
+        // console.log(`🧹 Cleared memory cache for key: ${key}`);
       }
     }
-    
+
     // Clear Redis cache if available
     if (redisClient) {
       try {
         const keys = await redisClient.keys(`*${pattern}*`);
         if (keys.length > 0) {
           await redisClient.del(...keys);
-          console.log(`🧹 Cleared ${keys.length} Redis keys matching pattern: ${pattern}`);
+          // console.log(`🧹 Cleared ${keys.length} Redis keys matching pattern: ${pattern}`);
         }
       } catch (error) {
-        console.log('Redis pattern clear error:', error.message);
+        // console.log('Redis pattern clear error:', error.message);
       }
     }
   }
@@ -288,12 +288,12 @@ class AdvancedCache {
    */
   async delete(key) {
     memoryCache.del(key);
-    
+
     if (redisClient) {
       try {
         await redisClient.del(key);
       } catch (error) {
-        console.log('Redis delete error:', error.message);
+        // console.log('Redis delete error:', error.message);
       }
     }
   }
@@ -346,7 +346,7 @@ class AdvancedCache {
 const advancedCache = new AdvancedCache();
 
 // Add methods for compatibility with optimization manager
-advancedCache.ping = async function() {
+advancedCache.ping = async function () {
   try {
     if (redisClient && redisClient.status === 'ready') {
       await redisClient.ping();
@@ -360,19 +360,19 @@ advancedCache.ping = async function() {
   }
 };
 
-advancedCache.close = async function() {
+advancedCache.close = async function () {
   try {
     if (redisClient) {
       await redisClient.quit();
     }
     memoryCache.close();
-    console.log('✅ Cache connections closed');
+    // console.log('✅ Cache connections closed');
   } catch (error) {
     console.warn('Cache close warning:', error.message);
   }
 };
 
-advancedCache.getStats = function() {
+advancedCache.getStats = function () {
   return {
     ...this.metrics,
     memoryKeys: memoryCache.keys().length,
@@ -381,17 +381,17 @@ advancedCache.getStats = function() {
 };
 
 // Add cache cleanup method to manage memory
-advancedCache.cleanup = function() {
+advancedCache.cleanup = function () {
   try {
     const keyCount = memoryCache.keys().length;
-    
+
     // If we have too many keys, clear some old ones
     if (keyCount > 400) {
       const keys = memoryCache.keys();
       const keysToDelete = keys.slice(0, Math.floor(keyCount * 0.2)); // Remove 20% of keys
-      
+
       keysToDelete.forEach(key => memoryCache.del(key));
-      console.log(`🧹 Cleaned up ${keysToDelete.length} cache entries to manage memory`);
+      // console.log(`🧹 Cleaned up ${keysToDelete.length} cache entries to manage memory`);
     }
   } catch (error) {
     console.warn('Cache cleanup warning:', error.message);
@@ -418,7 +418,7 @@ const cacheMiddleware = (options = {}) => {
     }
 
     const key = keyGenerator(req);
-    
+
     try {
       const cachedData = await advancedCache.getWithSWR(
         key,
@@ -439,10 +439,10 @@ const cacheMiddleware = (options = {}) => {
       // Cache miss - continue to route handler
       res.setHeader('X-Cache', 'MISS');
       res.setHeader('X-Cache-Key', key);
-      
+
       // Override res.json to cache the response
       const originalJson = res.json;
-      res.json = function(data) {
+      res.json = function (data) {
         // Cache the response for next time
         advancedCache.refreshCache(key, async () => data, ttl);
         return originalJson.call(this, data);

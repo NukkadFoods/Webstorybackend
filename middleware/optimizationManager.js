@@ -17,7 +17,7 @@ class OptimizationManager {
       database: null,
       monitor: performanceMonitor
     };
-    
+
     this.config = {
       enableRedis: true,
       enableMonitoring: true,
@@ -30,8 +30,8 @@ class OptimizationManager {
         subscribers: { ttl: 600, staleWhileRevalidate: false }   // 10 minutes
       }
     };
-    
-    console.log('🚀 Optimization Manager initializing...');
+
+    // console.log('🚀 Optimization Manager initializing...');
   }
 
   /**
@@ -39,27 +39,27 @@ class OptimizationManager {
    */
   async initialize() {
     try {
-      console.log('🔧 Starting optimization component initialization...');
-      
+      // console.log('🔧 Starting optimization component initialization...');
+
       // Initialize cache system
       this.components.cache = await advancedCache.initialize();
-      console.log('✅ Advanced cache system initialized');
-      
+      // console.log('✅ Advanced cache system initialized');
+
       // Initialize rate limiter
       this.components.rateLimiter = groqRateLimiter;
-      console.log('✅ Groq rate limiter initialized');
-      
+      // console.log('✅ Groq rate limiter initialized');
+
       // Initialize database manager
       this.components.database = databaseManager;
       await this.components.database.initialize();
-      console.log('✅ Database manager initialized');
-      
+      // console.log('✅ Database manager initialized');
+
       this.isInitialized = true;
-      console.log('🚀 Optimization Manager fully initialized');
-      
+      // console.log('🚀 Optimization Manager fully initialized');
+
       // Start health monitoring
       this.startHealthChecks();
-      
+
       return true;
     } catch (error) {
       console.error('❌ Failed to initialize Optimization Manager:', error);
@@ -72,12 +72,12 @@ class OptimizationManager {
    */
   getMiddlewareStack() {
     const middleware = [];
-    
+
     // Performance monitoring (always first)
     if (this.config.enableMonitoring) {
       middleware.push(performanceMiddleware);
     }
-    
+
     // Compression middleware
     if (this.config.enableCompression) {
       const compression = require('compression');
@@ -90,14 +90,14 @@ class OptimizationManager {
         threshold: 1024
       }));
     }
-    
+
     // Security headers
     const helmet = require('helmet');
     middleware.push(helmet({
       crossOriginEmbedderPolicy: false,
       contentSecurityPolicy: false
     }));
-    
+
     // Rate limiting middleware
     if (this.config.enableRateLimit) {
       const rateLimit = require('express-rate-limit');
@@ -109,7 +109,7 @@ class OptimizationManager {
         legacyHeaders: false
       }));
     }
-    
+
     return middleware;
   }
 
@@ -121,10 +121,10 @@ class OptimizationManager {
       console.warn('⚠️ Optimization Manager not initialized, using direct fetch');
       return await fetchFunction();
     }
-    
+
     const cacheConfig = this.config.cacheStrategies[strategy] || { ttl: 300, staleWhileRevalidate: true };
     const startTime = Date.now();
-    
+
     try {
       const result = await this.components.cache.getWithSWR(
         key,
@@ -132,10 +132,10 @@ class OptimizationManager {
         cacheConfig.ttl,
         cacheConfig.staleWhileRevalidate
       );
-      
+
       const duration = Date.now() - startTime;
       performanceMonitor.trackCachePerformance(result.fromCache, duration);
-      
+
       return result.data;
     } catch (error) {
       console.error(`Cache error for key ${key}:`, error);
@@ -153,15 +153,15 @@ class OptimizationManager {
       // Fallback to direct call if not initialized
       return await request();
     }
-    
+
     const startTime = Date.now();
-    
+
     try {
       const result = await this.components.rateLimiter.executeRequest(request, { priority });
       const waitTime = Date.now() - startTime;
-      
+
       performanceMonitor.trackGroqUsage(result.tokensUsed || 0, waitTime);
-      
+
       return result.data;
     } catch (error) {
       const waitTime = Date.now() - startTime;
@@ -178,15 +178,15 @@ class OptimizationManager {
       console.warn('⚠️ Optimization Manager not initialized, using direct database operation');
       return await operation();
     }
-    
+
     const startTime = Date.now();
-    
+
     try {
       const result = await this.components.database.executeWithRetry(operation, retries);
       const duration = Date.now() - startTime;
-      
+
       performanceMonitor.trackDatabaseQuery(duration);
-      
+
       return result;
     } catch (error) {
       const duration = Date.now() - startTime;
@@ -235,12 +235,12 @@ class OptimizationManager {
         if (this.components.cache) {
           await this.components.cache.ping();
         }
-        
+
         // Check database health
         if (this.components.database) {
           await this.components.database.healthCheck();
         }
-        
+
         // Check rate limiter health
         if (this.components.rateLimiter) {
           const stats = this.components.rateLimiter.getStats();
@@ -248,7 +248,7 @@ class OptimizationManager {
             performanceMonitor.addAlert('warning', `Large Groq API queue: ${stats.queueLength} requests`);
           }
         }
-        
+
       } catch (error) {
         performanceMonitor.addAlert('error', `Health check failed: ${error.message}`);
       }
@@ -259,18 +259,18 @@ class OptimizationManager {
    * Graceful shutdown of all components
    */
   async shutdown() {
-    console.log('🛑 Optimization Manager shutting down...');
-    
+    // console.log('🛑 Optimization Manager shutting down...');
+
     try {
       if (this.components.database) {
         await this.components.database.disconnect();
       }
-      
+
       if (this.components.cache) {
         await this.components.cache.close();
       }
-      
-      console.log('✅ Optimization Manager shutdown complete');
+
+      // console.log('✅ Optimization Manager shutdown complete');
     } catch (error) {
       console.error('❌ Error during shutdown:', error);
     }
@@ -281,23 +281,23 @@ class OptimizationManager {
    */
   updateConfig(newConfig) {
     this.config = { ...this.config, ...newConfig };
-    console.log('📝 Configuration updated:', newConfig);
+    // console.log('📝 Configuration updated:', newConfig);
   }
 
   /**
    * Preload critical data into cache
    */
   async preloadCache() {
-    console.log('🚀 Preloading critical data into cache...');
-    
+    // console.log('🚀 Preloading critical data into cache...');
+
     try {
       // Preload recent articles
       await this.smartCache('preload:recent_articles', async () => {
         // This would typically fetch from your API
         return { preloaded: true, timestamp: Date.now() };
       }, 'articles');
-      
-      console.log('✅ Cache preloading complete');
+
+      // console.log('✅ Cache preloading complete');
     } catch (error) {
       console.error('❌ Cache preloading failed:', error);
     }
@@ -310,13 +310,13 @@ const optimizationManager = new OptimizationManager();
 /**
  * Convenience functions for easy integration
  */
-const optimizedFetch = (key, fetchFn, strategy) => 
+const optimizedFetch = (key, fetchFn, strategy) =>
   optimizationManager.smartCache(key, fetchFn, strategy);
 
-const optimizedGroqCall = (request, priority) => 
+const optimizedGroqCall = (request, priority) =>
   optimizationManager.callGroqAPI(request, priority);
 
-const optimizedDbOperation = (operation, retries) => 
+const optimizedDbOperation = (operation, retries) =>
   optimizationManager.databaseOperation(operation, retries);
 
 module.exports = {
