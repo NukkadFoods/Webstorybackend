@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const MonitoringService = require('../services/monitoringService');
+const redisLoadBalancer = require('../config/redisLoadBalancer');
 
 // Health check endpoint
 router.get('/api/health', (req, res) => {
@@ -44,6 +45,25 @@ router.get('/api/metrics/history', async (req, res) => {
   try {
     const history = await MonitoringService.getMetricsHistory();
     res.json(history);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get Redis load balancer stats
+router.get('/api/redis/stats', (req, res) => {
+  try {
+    const stats = redisLoadBalancer.getStats();
+    res.json({
+      timestamp: new Date().toISOString(),
+      ...stats,
+      summary: {
+        totalDailyCapacity: stats.dailyLimit * stats.totalConnections,
+        totalDailyUsed: stats.totalDailyRequests,
+        percentUsed: Math.round((stats.totalDailyRequests / (stats.dailyLimit * stats.totalConnections)) * 100),
+        healthyConnections: stats.connections.filter(c => c.healthy && !c.dead).length
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

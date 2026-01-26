@@ -11,6 +11,30 @@ class RedisLoadBalancer {
         this.currentIndex = 0;
         this.connectionStats = [];
         this.isInitialized = false;
+        // Daily request tracking (Upstash free tier: ~10K commands/day)
+        this.DAILY_LIMIT_PER_INSTANCE = 9000; // Leave buffer below 10K
+        this.dailyRequests = [];
+        this.lastResetDate = new Date().toDateString();
+    }
+
+    /**
+     * Reset daily counters at midnight
+     */
+    _checkDailyReset() {
+        const today = new Date().toDateString();
+        if (today !== this.lastResetDate) {
+            console.log('🔄 Resetting daily Redis request counters');
+            this.dailyRequests = this.dailyRequests.map(() => 0);
+            this.lastResetDate = today;
+            // Also reset dead status - give instances a fresh chance
+            this.connectionStats.forEach(stats => {
+                if (stats.dead && stats.name !== 'mock') {
+                    stats.dead = false;
+                    stats.healthy = true;
+                    console.log(`✅ ${stats.name} reset for new day`);
+                }
+            });
+        }
     }
 
     /**
@@ -36,6 +60,7 @@ class RedisLoadBalancer {
             // console.log('⚠️  No Redis URLs found - using Mock Redis');
             this.connections.push(new MockRedis());
             this.connectionStats.push({ requests: 0, errors: 0, name: 'mock', healthy: true });
+            this.dailyRequests.push(0);
         } else {
             redisUrls.forEach((url, idx) => {
                 try {
@@ -47,7 +72,8 @@ class RedisLoadBalancer {
                         name: `redis-${idx + 1}`,
                         healthy: true
                     });
-                    // console.log(`✅ Redis Pool ${idx + 1} configured`);
+                    this.dailyRequests.push(0);
+                    console.log(`✅ Redis Pool ${idx + 1} configured (daily limit: ${this.DAILY_LIMIT_PER_INSTANCE})`);
                 } catch (err) {
                     console.error(`❌ Failed to configure Redis ${idx + 1}:`, err.message);
                 }
@@ -58,7 +84,8 @@ class RedisLoadBalancer {
         if (this.connections.length === 0) {
             // console.log('⚠️  All Redis connections failed - using Mock Redis');
             this.connections.push(new MockRedis());
-            this.connectionStats.push({ requests: 0, errors: 0, name: 'mock' });
+            this.connectionStats.push({ requests: 0, errors: 0, name: 'mock', healthy: true });
+            this.dailyRequests.push(0);
         }
 
         this.isInitialized = true;
@@ -126,32 +153,54 @@ class RedisLoadBalancer {
     }
 
     /**
-     * Get the next connection using round-robin with health check
+     * Get the next connection using smart load balancing:
+     * 1. Check daily reset
+     * 2. Skip instances at daily limit
+     * 3. Prefer instance with fewer daily requests (least-used first)
      */
     _getConnection() {
         if (!this.isInitialized) this.initialize();
 
-        // Find a healthy connection using round-robin
-        const startIndex = this.currentIndex;
-        let attempts = 0;
+        // Reset daily counters if new day
+        this._checkDailyReset();
 
-        do {
-            const conn = this.connections[this.currentIndex];
-            const stats = this.connectionStats[this.currentIndex];
+        // Find the best available connection
+        let bestIndex = -1;
+        let lowestUsage = Infinity;
 
-            this.currentIndex = (this.currentIndex + 1) % this.connections.length;
-            attempts++;
+        for (let i = 0; i < this.connections.length; i++) {
+            const stats = this.connectionStats[i];
+            const dailyCount = this.dailyRequests[i] || 0;
 
-            // Return if healthy or if we've tried all connections
-            if (stats.healthy || attempts >= this.connections.length) {
-                stats.requests++;
-                return { connection: conn, index: this.currentIndex };
+            // Skip dead or unhealthy connections
+            if (stats.dead || !stats.healthy) continue;
+
+            // Skip if at daily limit (unless it's mock which has no limit)
+            if (stats.name !== 'mock' && dailyCount >= this.DAILY_LIMIT_PER_INSTANCE) {
+                console.log(`⚠️ ${stats.name} at daily limit (${dailyCount}/${this.DAILY_LIMIT_PER_INSTANCE}), skipping`);
+                continue;
             }
-        } while (this.currentIndex !== startIndex);
 
-        // Fallback to first connection
-        this.connectionStats[0].requests++;
-        return { connection: this.connections[0], index: 0 };
+            // Prefer the connection with lowest daily usage
+            if (dailyCount < lowestUsage) {
+                lowestUsage = dailyCount;
+                bestIndex = i;
+            }
+        }
+
+        // If no connection found, use mock or first available
+        if (bestIndex === -1) {
+            console.warn('⚠️ All Redis instances exhausted or unhealthy, using fallback');
+            // Try to find mock or any connection
+            bestIndex = this.connectionStats.findIndex(s => s.name === 'mock');
+            if (bestIndex === -1) bestIndex = 0;
+        }
+
+        // Update counters
+        this.connectionStats[bestIndex].requests++;
+        this.dailyRequests[bestIndex] = (this.dailyRequests[bestIndex] || 0) + 1;
+
+        return { connection: this.connections[bestIndex], index: bestIndex };
     }
 
     /**
@@ -168,18 +217,36 @@ class RedisLoadBalancer {
             if (this.connectionStats[index]) {
                 this.connectionStats[index].errors++;
                 this.connectionStats[index].healthy = false;
+
+                // If rate limited, mark as dead and max out daily counter
+                if (err.message && err.message.includes('max requests limit exceeded')) {
+                    this.connectionStats[index].dead = true;
+                    this.dailyRequests[index] = this.DAILY_LIMIT_PER_INSTANCE;
+                    console.error(`💀 Redis-${index + 1} rate limited - marked as exhausted for today`);
+                }
             }
 
             // Try another connection if available
             if (this.connections.length > 1) {
-                const fallback = this.connections.find((_, i) =>
-                    i !== index && this.connectionStats[i]?.healthy
-                );
-                if (fallback) {
+                for (let i = 0; i < this.connections.length; i++) {
+                    if (i === index) continue;
+                    const stats = this.connectionStats[i];
+                    const dailyCount = this.dailyRequests[i] || 0;
+
+                    // Skip if dead, unhealthy, or at limit
+                    if (stats.dead || !stats.healthy) continue;
+                    if (stats.name !== 'mock' && dailyCount >= this.DAILY_LIMIT_PER_INSTANCE) continue;
+
                     try {
-                        return await fallback[command](...args);
+                        this.dailyRequests[i] = dailyCount + 1;
+                        return await this.connections[i][command](...args);
                     } catch (fallbackErr) {
-                        throw fallbackErr;
+                        // Mark this one as failed too
+                        stats.errors++;
+                        if (fallbackErr.message?.includes('max requests limit exceeded')) {
+                            stats.dead = true;
+                            this.dailyRequests[i] = this.DAILY_LIMIT_PER_INSTANCE;
+                        }
                     }
                 }
             }
@@ -267,14 +334,20 @@ class RedisLoadBalancer {
      * Get load balancer statistics
      */
     getStats() {
+        this._checkDailyReset();
         return {
             totalConnections: this.connections.length,
+            dailyLimit: this.DAILY_LIMIT_PER_INSTANCE,
             connections: this.connectionStats.map((stats, idx) => ({
                 ...stats,
-                index: idx
+                index: idx,
+                dailyRequests: this.dailyRequests[idx] || 0,
+                dailyRemaining: this.DAILY_LIMIT_PER_INSTANCE - (this.dailyRequests[idx] || 0),
+                atLimit: (this.dailyRequests[idx] || 0) >= this.DAILY_LIMIT_PER_INSTANCE
             })),
             totalRequests: this.connectionStats.reduce((sum, s) => sum + s.requests, 0),
-            totalErrors: this.connectionStats.reduce((sum, s) => sum + s.errors, 0)
+            totalErrors: this.connectionStats.reduce((sum, s) => sum + s.errors, 0),
+            totalDailyRequests: this.dailyRequests.reduce((sum, r) => sum + r, 0)
         };
     }
 
