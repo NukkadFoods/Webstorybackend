@@ -1,20 +1,147 @@
 /**
- * 🔴 Redis Load Balancer - Distributes requests across multiple Upstash instances
- * Uses REST API for better serverless compatibility
- * Supports 4 instances for ~2M requests/month free tier
+ * 🔴 Redis Load Balancer - Smart Distribution with Health Checks
+ * Features:
+ * - Initial health check on startup
+ * - Even load distribution across healthy instances
+ * - Auto-recovery when instances come back online
+ * - Consistent key routing for data integrity
+ * - IORedis support for BullMQ
  */
+
+const IORedis = require('ioredis');
 
 class RedisLoadBalancer {
     constructor() {
         this.instances = [];
-        this.currentIndex = 0;
         this.isInitialized = false;
-        // Daily request tracking (Upstash free tier: ~10K commands/day per instance)
-        this.DAILY_LIMIT_PER_INSTANCE = 9000; // Leave buffer below 10K
-        this.dailyRequests = [];
+        this.DAILY_LIMIT_PER_INSTANCE = 9000;
         this.lastResetDate = new Date().toDateString();
-        // In-memory fallback cache
         this.memoryCache = new Map();
+        this.ioredisConnections = [];
+        this.healthCheckInterval = null;
+    }
+
+    /**
+     * Initialize and run health checks
+     */
+    async initialize() {
+        if (this.isInitialized) return;
+        this.isInitialized = true;  // Set early to prevent re-entry
+
+        if (process.env.REDIS_DISABLED === 'true') {
+            console.log('🔌 Redis DISABLED - using in-memory cache');
+            return;
+        }
+
+        // Only load instances if not already loaded
+        if (this.instances.length === 0) {
+            for (let i = 1; i <= 4; i++) {
+                const url = process.env[`UPSTASH_REDIS_REST_URL${i}`]?.replace(/"/g, '');
+                const token = process.env[`UPSTASH_REDIS_REST_TOKEN${i}`]?.replace(/"/g, '');
+
+                if (url && token) {
+                    const name = url.split('.')[0].replace('https://', '');
+                    this.instances.push({
+                        id: i,
+                        name: name,
+                        url: url,
+                        token: token,
+                        healthy: false,
+                        dead: false,
+                        requests: 0,
+                        errors: 0,
+                        dailyRequests: 0,
+                        lastHealthCheck: null,
+                        latency: null
+                    });
+                }
+            }
+        }
+
+        if (this.instances.length === 0) {
+            console.log('⚠️  No Redis instances configured');
+            return;
+        }
+
+        // Run initial health check
+        console.log(`\n🔍 Running health check on ${this.instances.length} Redis instances...`);
+        await this._runHealthCheck();
+
+        // Create IORedis connections only for healthy instances
+        this._initIORedisConnections();
+
+        // Schedule periodic health checks (every 5 minutes)
+        if (!this.healthCheckInterval) {
+            this.healthCheckInterval = setInterval(() => {
+                this._runHealthCheck();
+            }, 5 * 60 * 1000);
+        }
+
+        this._printStatus();
+    }
+
+    /**
+     * Run health check on all instances
+     */
+    async _runHealthCheck() {
+        this._checkDailyReset();
+
+        const results = await Promise.all(
+            this.instances.map(async (inst) => {
+                const start = Date.now();
+                try {
+                    const res = await fetch(`${inst.url}/ping`, {
+                        headers: { Authorization: `Bearer ${inst.token}` },
+                        signal: AbortSignal.timeout(5000)
+                    });
+                    const data = await res.json();
+                    const latency = Date.now() - start;
+
+                    if (data.result === 'PONG') {
+                        inst.healthy = true;
+                        inst.dead = false;
+                        inst.latency = latency;
+                        inst.lastHealthCheck = new Date();
+                        return { inst, status: 'healthy', latency };
+                    } else {
+                        inst.healthy = false;
+                        if (data.error?.includes('max requests limit exceeded')) {
+                            inst.dead = true;
+                        }
+                        return { inst, status: 'error', error: data.error };
+                    }
+                } catch (err) {
+                    inst.healthy = false;
+                    inst.latency = null;
+                    return { inst, status: 'error', error: err.message };
+                }
+            })
+        );
+
+        return results;
+    }
+
+    /**
+     * Print current status
+     */
+    _printStatus() {
+        const healthy = this.instances.filter(i => i.healthy);
+        const dead = this.instances.filter(i => i.dead);
+
+        console.log('\n┌─────────────────────────────────────────────────────┐');
+        console.log('│           Redis Load Balancer Status                │');
+        console.log('├─────────────────────────────────────────────────────┤');
+
+        this.instances.forEach(inst => {
+            const status = inst.dead ? '❌ DEAD' : inst.healthy ? '✅ OK  ' : '⚠️  DOWN';
+            const latency = inst.latency ? `${inst.latency}ms` : 'N/A';
+            const load = `${inst.dailyRequests}/${this.DAILY_LIMIT_PER_INSTANCE}`;
+            console.log(`│ ${status} │ ${inst.name.padEnd(20)} │ ${latency.padStart(6)} │ ${load.padStart(10)} │`);
+        });
+
+        console.log('├─────────────────────────────────────────────────────┤');
+        console.log(`│ Healthy: ${healthy.length}/${this.instances.length}  │  Dead: ${dead.length}  │  Ready for requests     │`);
+        console.log('└─────────────────────────────────────────────────────┘\n');
     }
 
     /**
@@ -23,245 +150,199 @@ class RedisLoadBalancer {
     _checkDailyReset() {
         const today = new Date().toDateString();
         if (today !== this.lastResetDate) {
-            console.log('🔄 Resetting daily Redis request counters');
-            this.dailyRequests = this.dailyRequests.map(() => 0);
+            console.log('\n🔄 New day - resetting counters and re-checking instances...');
             this.lastResetDate = today;
-            // Reset dead status - give instances a fresh chance
+
             this.instances.forEach(inst => {
+                inst.dailyRequests = 0;
+                // Give dead instances another chance
                 if (inst.dead) {
                     inst.dead = false;
-                    inst.healthy = true;
-                    console.log(`✅ ${inst.name} reset for new day`);
+                    console.log(`   ↻ ${inst.name} - will retry`);
                 }
             });
         }
     }
 
     /**
-     * Initialize connections from environment variables
-     * Supports UPSTASH_REDIS_REST_URL1/TOKEN1 through URL4/TOKEN4
+     * Initialize IORedis connections for BullMQ
      */
-    initialize() {
-        if (this.isInitialized) return;
+    _initIORedisConnections() {
+        // Skip if already initialized
+        if (this.ioredisConnections.length > 0) return;
 
-        // Check if Redis is disabled
-        if (process.env.REDIS_DISABLED === 'true') {
-            console.log('🔌 Redis DISABLED - using in-memory cache');
-            this.isInitialized = true;
-            return;
-        }
+        // Create connections only for healthy instances (skip set-gibbon)
+        for (const inst of this.instances) {
+            if (!inst.healthy || inst.dead || inst.name.includes('set-gibbon')) {
+                console.log(`   ⏭️  IORedis skip: ${inst.name}`);
+                continue;
+            }
 
-        // Load all Upstash REST API instances
-        for (let i = 1; i <= 4; i++) {
-            const url = process.env[`UPSTASH_REDIS_REST_URL${i}`]?.replace(/"/g, '');
-            const token = process.env[`UPSTASH_REDIS_REST_TOKEN${i}`]?.replace(/"/g, '');
+            try {
+                const host = inst.url.replace('https://', '').replace('http://', '');
+                const redisUrl = `rediss://default:${inst.token}@${host}:6379`;
 
-            if (url && token) {
-                this.instances.push({
-                    name: `redis-${i}`,
-                    url: url,
-                    token: token,
-                    requests: 0,
-                    errors: 0,
-                    healthy: true,
-                    dead: false
+                const conn = new IORedis(redisUrl, {
+                    maxRetriesPerRequest: null,
+                    enableReadyCheck: false,
+                    connectTimeout: 10000,
+                    lazyConnect: true,
+                    retryStrategy(times) {
+                        if (times > 3) return null;
+                        return Math.min(times * 500, 3000);
+                    },
+                    tls: { rejectUnauthorized: false }
                 });
-                this.dailyRequests.push(0);
-                console.log(`✅ Redis-${i} configured: ${url.split('.')[0].replace('https://', '')}`);
+
+                conn.on('error', (err) => {
+                    if (err.message.includes('max requests limit exceeded')) {
+                        inst.dead = true;
+                        inst.healthy = false;
+                    }
+                });
+
+                this.ioredisConnections.push({ conn, instance: inst });
+                console.log(`   🔌 IORedis: ${inst.name}`);
+            } catch (err) {
+                console.error(`   ❌ IORedis failed: ${inst.name}`);
             }
         }
-
-        if (this.instances.length === 0) {
-            console.log('⚠️  No Redis instances configured - using in-memory cache');
-        } else {
-            console.log(`🔄 Redis Load Balancer: ${this.instances.length} instances ready`);
-        }
-
-        this.isInitialized = true;
     }
 
     /**
-     * Simple hash function for consistent key routing
+     * Get instance with lowest load (even distribution)
      */
-    _hashKey(key) {
-        let hash = 0;
-        for (let i = 0; i < key.length; i++) {
-            const char = key.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
-            hash = hash & hash; // Convert to 32bit integer
-        }
-        return Math.abs(hash);
+    _getInstanceEvenDistribution() {
+        if (!this.isInitialized) this.initialize();
+        this._checkDailyReset();
+
+        // Filter healthy instances not at daily limit
+        const available = this.instances.filter(inst =>
+            inst.healthy &&
+            !inst.dead &&
+            inst.dailyRequests < this.DAILY_LIMIT_PER_INSTANCE
+        );
+
+        if (available.length === 0) return null;
+
+        // Pick instance with lowest daily requests (even distribution)
+        available.sort((a, b) => a.dailyRequests - b.dailyRequests);
+        const selected = available[0];
+
+        selected.requests++;
+        selected.dailyRequests++;
+
+        return selected;
     }
 
     /**
-     * Get instance using consistent key-based routing
-     * Same key always goes to same healthy instance (for data consistency)
+     * Get instance using consistent key hashing
      */
     _getInstanceForKey(key) {
         if (!this.isInitialized) this.initialize();
         this._checkDailyReset();
 
-        if (this.instances.length === 0) return null;
+        const available = this.instances.filter(inst =>
+            inst.healthy &&
+            !inst.dead &&
+            inst.dailyRequests < this.DAILY_LIMIT_PER_INSTANCE
+        );
 
-        // Get healthy instances
-        const healthyIndices = [];
-        for (let i = 0; i < this.instances.length; i++) {
-            const inst = this.instances[i];
-            const dailyCount = this.dailyRequests[i] || 0;
+        if (available.length === 0) return null;
 
-            if (inst.dead || !inst.healthy) continue;
-            if (dailyCount >= this.DAILY_LIMIT_PER_INSTANCE) continue;
-
-            healthyIndices.push(i);
+        // Consistent hash
+        let hash = 0;
+        for (let i = 0; i < key.length; i++) {
+            hash = ((hash << 5) - hash) + key.charCodeAt(i);
+            hash = hash & hash;
         }
+        const idx = Math.abs(hash) % available.length;
+        const selected = available[idx];
 
-        if (healthyIndices.length === 0) return null;
+        selected.requests++;
+        selected.dailyRequests++;
 
-        // Use consistent hashing to route key to same instance
-        const hash = this._hashKey(key || 'default');
-        const targetIndex = healthyIndices[hash % healthyIndices.length];
-
-        this.dailyRequests[targetIndex]++;
-        this.instances[targetIndex].requests++;
-        return this.instances[targetIndex];
+        return selected;
     }
 
     /**
-     * Get the best available instance using round-robin (for non-key operations)
-     */
-    _getInstance() {
-        if (!this.isInitialized) this.initialize();
-        this._checkDailyReset();
-
-        // Find instance with lowest daily usage that isn't dead/unhealthy
-        let bestIndex = -1;
-        let lowestUsage = Infinity;
-
-        for (let i = 0; i < this.instances.length; i++) {
-            const inst = this.instances[i];
-            const dailyCount = this.dailyRequests[i] || 0;
-
-            if (inst.dead || !inst.healthy) continue;
-            if (dailyCount >= this.DAILY_LIMIT_PER_INSTANCE) {
-                continue;
-            }
-
-            if (dailyCount < lowestUsage) {
-                lowestUsage = dailyCount;
-                bestIndex = i;
-            }
-        }
-
-        if (bestIndex === -1) {
-            return null; // All instances exhausted
-        }
-
-        this.dailyRequests[bestIndex]++;
-        this.instances[bestIndex].requests++;
-        return this.instances[bestIndex];
-    }
-
-    /**
-     * Execute REST API call to Upstash
+     * Execute REST API call
      */
     async _restCall(instance, command) {
-        try {
-            const response = await fetch(`${instance.url}/${command}`, {
-                headers: { Authorization: `Bearer ${instance.token}` }
-            });
+        const response = await fetch(`${instance.url}/${command}`, {
+            headers: { Authorization: `Bearer ${instance.token}` }
+        });
 
-            const data = await response.json();
+        const data = await response.json();
 
-            if (data.error) {
-                if (data.error.includes('max requests limit exceeded')) {
-                    instance.dead = true;
-                    instance.healthy = false;
-                    console.error(`💀 ${instance.name} rate limited - marked dead`);
-                }
-                throw new Error(data.error);
-            }
-
-            return data.result;
-        } catch (err) {
+        if (data.error) {
             instance.errors++;
-            instance.healthy = false;
-            throw err;
+            if (data.error.includes('max requests limit exceeded')) {
+                instance.dead = true;
+                instance.healthy = false;
+            }
+            throw new Error(data.error);
         }
+
+        return data.result;
     }
 
     /**
-     * Execute command with automatic failover
-     * Uses consistent key routing when key is provided
+     * Execute command with key-based routing
      */
     async _execute(command, key = null) {
-        // Get instance - use key-based routing for data consistency
-        const instance = key ? this._getInstanceForKey(key) : this._getInstance();
+        const instance = key ? this._getInstanceForKey(key) : this._getInstanceEvenDistribution();
 
         if (!instance) {
-            // All Redis instances exhausted
-            return null;
+            return null; // All instances exhausted
         }
 
         try {
             return await this._restCall(instance, command);
         } catch (err) {
-            // Log error but don't retry (maintain consistency)
-            console.error(`❌ ${instance.name} failed: ${err.message}`);
+            console.error(`❌ ${instance.name}: ${err.message.substring(0, 50)}`);
             return null;
         }
     }
 
-    // Redis command implementations using REST API with consistent key routing
+    // ═══════════════════════════════════════════════════════════════════
+    // Redis Commands (REST API)
+    // ═══════════════════════════════════════════════════════════════════
+
     async get(key) {
         const result = await this._execute(`get/${encodeURIComponent(key)}`, key);
-        if (result === null) {
-            return this.memoryCache.get(key) || null;
-        }
-        return result;
+        return result ?? this.memoryCache.get(key) ?? null;
     }
 
     async set(key, value, ...args) {
         this.memoryCache.set(key, value);
-        let command = `set/${encodeURIComponent(key)}/${encodeURIComponent(value)}`;
-        if (args.length >= 2 && args[0]?.toUpperCase() === 'EX') {
-            command += `/EX/${args[1]}`;
-        }
-        const result = await this._execute(command, key);
-        return result || 'OK';
+        let cmd = `set/${encodeURIComponent(key)}/${encodeURIComponent(value)}`;
+        if (args[0]?.toUpperCase() === 'EX') cmd += `/EX/${args[1]}`;
+        return (await this._execute(cmd, key)) || 'OK';
     }
 
     async setex(key, seconds, value) {
         this.memoryCache.set(key, value);
         setTimeout(() => this.memoryCache.delete(key), seconds * 1000);
-        const result = await this._execute(
-            `setex/${encodeURIComponent(key)}/${seconds}/${encodeURIComponent(value)}`, key
-        );
-        return result || 'OK';
+        return (await this._execute(`setex/${encodeURIComponent(key)}/${seconds}/${encodeURIComponent(value)}`, key)) || 'OK';
     }
 
     async del(...keys) {
         keys.forEach(k => this.memoryCache.delete(k));
-        // For multi-key delete, route to first key's instance
-        const result = await this._execute(`del/${keys.map(k => encodeURIComponent(k)).join('/')}`, keys[0]);
-        return result || keys.length;
+        return (await this._execute(`del/${keys.map(k => encodeURIComponent(k)).join('/')}`, keys[0])) || keys.length;
     }
 
     async exists(key) {
         const result = await this._execute(`exists/${encodeURIComponent(key)}`, key);
-        if (result === null) {
-            return this.memoryCache.has(key) ? 1 : 0;
-        }
-        return result;
+        return result ?? (this.memoryCache.has(key) ? 1 : 0);
     }
 
     async ttl(key) {
-        const result = await this._execute(`ttl/${encodeURIComponent(key)}`, key);
-        return result ?? -1;
+        return (await this._execute(`ttl/${encodeURIComponent(key)}`, key)) ?? -1;
     }
 
     async ping() {
-        const result = await this._execute('ping');
-        return result || 'PONG';
+        return (await this._execute('ping')) || 'PONG';
     }
 
     async incr(key) {
@@ -275,174 +356,237 @@ class RedisLoadBalancer {
     }
 
     async expire(key, seconds) {
-        const result = await this._execute(`expire/${encodeURIComponent(key)}/${seconds}`, key);
-        return result ?? 1;
+        return (await this._execute(`expire/${encodeURIComponent(key)}/${seconds}`, key)) ?? 1;
     }
 
     async keys(pattern) {
-        // Keys command searches all instances and merges results
+        // Search all healthy instances
         const allKeys = new Set();
-        for (const inst of this.instances) {
-            if (inst.dead || !inst.healthy) continue;
+        for (const inst of this.instances.filter(i => i.healthy && !i.dead)) {
             try {
                 const result = await this._restCall(inst, `keys/${encodeURIComponent(pattern)}`);
-                if (Array.isArray(result)) {
-                    result.forEach(k => allKeys.add(k));
-                }
-            } catch (e) { /* continue */ }
+                if (Array.isArray(result)) result.forEach(k => allKeys.add(k));
+            } catch (e) { }
         }
         return Array.from(allKeys);
     }
 
     async hget(key, field) {
-        const result = await this._execute(`hget/${encodeURIComponent(key)}/${encodeURIComponent(field)}`, key);
-        return result;
+        return await this._execute(`hget/${encodeURIComponent(key)}/${encodeURIComponent(field)}`, key);
     }
 
     async hset(key, field, value) {
-        const result = await this._execute(
-            `hset/${encodeURIComponent(key)}/${encodeURIComponent(field)}/${encodeURIComponent(value)}`, key
-        );
-        return result ?? 1;
+        return (await this._execute(`hset/${encodeURIComponent(key)}/${encodeURIComponent(field)}/${encodeURIComponent(value)}`, key)) ?? 1;
     }
 
     async hgetall(key) {
-        const result = await this._execute(`hgetall/${encodeURIComponent(key)}`, key);
-        return result || {};
+        return (await this._execute(`hgetall/${encodeURIComponent(key)}`, key)) || {};
     }
 
-    // List operations (for CacheService FIFO patterns) - all routed by key
+    // List operations
     async lpush(key, ...values) {
-        const encodedValues = values.map(v => encodeURIComponent(v)).join('/');
-        const result = await this._execute(`lpush/${encodeURIComponent(key)}/${encodedValues}`, key);
-        return result ?? values.length;
+        const encoded = values.map(v => encodeURIComponent(v)).join('/');
+        return (await this._execute(`lpush/${encodeURIComponent(key)}/${encoded}`, key)) ?? values.length;
     }
 
     async rpush(key, ...values) {
-        const encodedValues = values.map(v => encodeURIComponent(v)).join('/');
-        const result = await this._execute(`rpush/${encodeURIComponent(key)}/${encodedValues}`, key);
-        return result ?? values.length;
+        const encoded = values.map(v => encodeURIComponent(v)).join('/');
+        return (await this._execute(`rpush/${encodeURIComponent(key)}/${encoded}`, key)) ?? values.length;
     }
 
     async lrange(key, start, end) {
-        const result = await this._execute(`lrange/${encodeURIComponent(key)}/${start}/${end}`, key);
-        return result || [];
+        return (await this._execute(`lrange/${encodeURIComponent(key)}/${start}/${end}`, key)) || [];
     }
 
     async llen(key) {
-        const result = await this._execute(`llen/${encodeURIComponent(key)}`, key);
-        return result ?? 0;
+        return (await this._execute(`llen/${encodeURIComponent(key)}`, key)) ?? 0;
     }
 
     async ltrim(key, start, end) {
-        const result = await this._execute(`ltrim/${encodeURIComponent(key)}/${start}/${end}`, key);
-        return result || 'OK';
+        return (await this._execute(`ltrim/${encodeURIComponent(key)}/${start}/${end}`, key)) || 'OK';
     }
 
-    // Database info operations (non-key specific)
+    // Database operations
     async info(section = '') {
-        const result = await this._execute(section ? `info/${section}` : 'info');
-        return result || '';
+        return (await this._execute(section ? `info/${section}` : 'info')) || '';
     }
 
     async dbsize() {
-        // Sum dbsize from all instances
         let total = 0;
-        for (const inst of this.instances) {
-            if (inst.dead || !inst.healthy) continue;
+        for (const inst of this.instances.filter(i => i.healthy && !i.dead)) {
             try {
-                const result = await this._restCall(inst, 'dbsize');
-                total += result || 0;
-            } catch (e) { /* continue */ }
+                total += (await this._restCall(inst, 'dbsize')) || 0;
+            } catch (e) { }
         }
         return total;
     }
 
     async flushdb() {
-        // Flush all instances
-        for (const inst of this.instances) {
-            if (inst.dead || !inst.healthy) continue;
-            try {
-                await this._restCall(inst, 'flushdb');
-            } catch (e) { /* continue */ }
+        for (const inst of this.instances.filter(i => i.healthy && !i.dead)) {
+            try { await this._restCall(inst, 'flushdb'); } catch (e) { }
         }
         this.memoryCache.clear();
         return 'OK';
     }
 
-    /**
-     * Get load balancer statistics
-     */
-    getStats() {
-        if (!this.isInitialized) this.initialize();
-        this._checkDailyReset();
+    // ═══════════════════════════════════════════════════════════════════
+    // BullMQ Support (IORedis)
+    // ═══════════════════════════════════════════════════════════════════
 
+    /**
+     * Get raw IORedis connection for BullMQ
+     * Creates connections on-demand, skipping rate-limited instances
+     * NOTE: Instance 1 (set-gibbon) is rate-limited until next month
+     */
+    getRawConnection() {
+        // Ensure instances are loaded (skip instance 1 - rate limited)
+        if (this.instances.length === 0) {
+            console.log('\n🔌 Initializing BullMQ connections...');
+            // Start from instance 2 to skip rate-limited set-gibbon
+            for (let i = 2; i <= 4; i++) {
+                const url = process.env[`UPSTASH_REDIS_REST_URL${i}`]?.replace(/"/g, '');
+                const token = process.env[`UPSTASH_REDIS_REST_TOKEN${i}`]?.replace(/"/g, '');
+                if (url && token) {
+                    this.instances.push({
+                        id: i,
+                        name: url.split('.')[0].replace('https://', ''),
+                        url, token,
+                        healthy: true,
+                        dead: false,
+                        requests: 0, errors: 0, dailyRequests: 0
+                    });
+                }
+            }
+            console.log(`   ⏭️  Skipping instance 1 (set-gibbon) - rate limited`);
+        }
+
+        // Create IORedis connections if not already created
+        if (this.ioredisConnections.length === 0) {
+            for (const inst of this.instances) {
+                // Skip set-gibbon (rate-limited) - other instances are healthy
+                if (inst.name.includes('set-gibbon')) {
+                    console.log(`   ⏭️  BullMQ skip: ${inst.name} (rate-limited)`);
+                    continue;
+                }
+
+                try {
+                    const host = inst.url.replace('https://', '');
+                    const redisUrl = `rediss://default:${inst.token}@${host}:6379`;
+
+                    const conn = new IORedis(redisUrl, {
+                        maxRetriesPerRequest: null,
+                        enableReadyCheck: false,
+                        connectTimeout: 10000,
+                        lazyConnect: true,
+                        retryStrategy(times) {
+                            if (times > 3) return null;
+                            return Math.min(times * 500, 3000);
+                        },
+                        tls: { rejectUnauthorized: false }
+                    });
+
+                    conn.on('error', (err) => {
+                        if (err.message.includes('max requests limit exceeded')) {
+                            inst.dead = true;
+                            inst.healthy = false;
+                        }
+                    });
+
+                    this.ioredisConnections.push({ conn, instance: inst });
+                    inst.healthy = true;  // Mark as healthy for BullMQ
+                    console.log(`   🔌 BullMQ: ${inst.name}`);
+                } catch (err) {
+                    console.error(`   ❌ IORedis failed: ${inst.name}`);
+                }
+            }
+        }
+
+        // Find connection with lowest load from healthy instances
+        const healthyConns = this.ioredisConnections.filter(
+            ({ instance }) => !instance.dead && instance.healthy
+        );
+
+        if (healthyConns.length === 0) {
+            console.warn('⚠️ No healthy Redis connections for BullMQ');
+            return this.ioredisConnections[0]?.conn || null;
+        }
+
+        // Sort by daily requests (even distribution)
+        healthyConns.sort((a, b) => a.instance.dailyRequests - b.instance.dailyRequests);
+        return healthyConns[0].conn;
+    }
+
+    async getRawConnectionAsync() {
+        if (!this.isInitialized) await this.initialize();
+
+        for (const { conn, instance } of this.ioredisConnections) {
+            if (instance.dead) continue;
+            try {
+                await conn.ping();
+                instance.healthy = true;
+                return conn;
+            } catch (err) {
+                instance.healthy = false;
+                if (err.message.includes('max requests limit exceeded')) {
+                    instance.dead = true;
+                }
+            }
+        }
+
+        return this.ioredisConnections[0]?.conn || null;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Stats & Management
+    // ═══════════════════════════════════════════════════════════════════
+
+    getStats() {
         return {
             totalInstances: this.instances.length,
+            healthyInstances: this.instances.filter(i => i.healthy && !i.dead).length,
+            deadInstances: this.instances.filter(i => i.dead).length,
             dailyLimit: this.DAILY_LIMIT_PER_INSTANCE,
-            instances: this.instances.map((inst, idx) => ({
+            instances: this.instances.map(inst => ({
+                id: inst.id,
                 name: inst.name,
                 healthy: inst.healthy,
                 dead: inst.dead,
+                latency: inst.latency,
                 requests: inst.requests,
                 errors: inst.errors,
-                dailyRequests: this.dailyRequests[idx] || 0,
-                dailyRemaining: this.DAILY_LIMIT_PER_INSTANCE - (this.dailyRequests[idx] || 0),
-                atLimit: (this.dailyRequests[idx] || 0) >= this.DAILY_LIMIT_PER_INSTANCE
+                dailyRequests: inst.dailyRequests,
+                dailyRemaining: this.DAILY_LIMIT_PER_INSTANCE - inst.dailyRequests,
+                loadPercent: Math.round((inst.dailyRequests / this.DAILY_LIMIT_PER_INSTANCE) * 100)
             })),
             totalRequests: this.instances.reduce((sum, i) => sum + i.requests, 0),
-            totalErrors: this.instances.reduce((sum, i) => sum + i.errors, 0),
-            totalDailyRequests: this.dailyRequests.reduce((sum, r) => sum + r, 0),
+            totalDailyRequests: this.instances.reduce((sum, i) => sum + i.dailyRequests, 0),
             memoryCacheSize: this.memoryCache.size
         };
     }
 
-    /**
-     * Test all connections and return health status
-     */
     async healthCheck() {
-        if (!this.isInitialized) this.initialize();
-
-        const results = [];
-        for (const inst of this.instances) {
-            const start = Date.now();
-            try {
-                const res = await fetch(`${inst.url}/ping`, {
-                    headers: { Authorization: `Bearer ${inst.token}` }
-                });
-                const data = await res.json();
-                const latency = Date.now() - start;
-
-                if (data.result === 'PONG') {
-                    inst.healthy = true;
-                    results.push({ name: inst.name, status: 'connected', latency });
-                } else {
-                    inst.healthy = false;
-                    results.push({ name: inst.name, status: 'failed', error: data.error });
-                }
-            } catch (err) {
-                inst.healthy = false;
-                results.push({ name: inst.name, status: 'error', error: err.message });
-            }
-        }
-
-        return results;
+        return this._runHealthCheck();
     }
 
-    /**
-     * Gracefully close (clear memory cache)
-     */
     async quit() {
+        if (this.healthCheckInterval) {
+            clearInterval(this.healthCheckInterval);
+        }
+        for (const { conn } of this.ioredisConnections) {
+            try { await conn.quit(); } catch (e) { }
+        }
+        this.ioredisConnections = [];
         this.memoryCache.clear();
         console.log('🔌 Redis Load Balancer shut down');
     }
 
-    // Event handlers (for compatibility - no-op for REST API)
     on(event, handler) {
-        // REST API doesn't have persistent connections
+        for (const { conn } of this.ioredisConnections) {
+            conn.on(event, handler);
+        }
     }
 }
 
-// Export singleton instance
+// Export singleton
 const loadBalancer = new RedisLoadBalancer();
 module.exports = loadBalancer;
