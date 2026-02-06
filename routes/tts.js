@@ -1,10 +1,211 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const ttsService = require('../services/ttsService');
 const Article = require('../models/article');
 
 // Config
 const DEFAULT_VOICE = 'en-US-AriaNeural';
+
+// ============ AUDIO CACHE ============
+const CACHE_DIR = path.join(__dirname, '../cache/audio');
+const audioMetadataCache = new Map(); // hash -> { size, duration, path, createdAt }
+
+// Ensure cache directory exists
+if (!fs.existsSync(CACHE_DIR)) {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    console.log('[TTS] Created audio cache directory:', CACHE_DIR);
+}
+
+// Generate hash for text
+function getTextHash(text) {
+    return crypto.createHash('md5').update(text).digest('hex');
+}
+
+// Get estimated duration from word count (rough estimate: 130 words/min)
+function estimateDuration(text) {
+    const wordCount = text.split(/\s+/).length;
+    return (wordCount / 130) * 60; // seconds
+}
+
+/**
+ * @route POST /api/tts/prepare
+ * @desc Generate audio, cache it, and return metadata (size, duration, audioId)
+ * @access Public
+ */
+router.post('/prepare', async (req, res) => {
+    try {
+        const { text, voice, title } = req.body;
+
+        if (!text || text.trim().length === 0) {
+            return res.status(400).json({ error: 'Text is required' });
+        }
+
+        const script = constructNewsScriptFromText(text, title);
+        const hash = getTextHash(script);
+        const audioPath = path.join(CACHE_DIR, `${hash}.mp3`);
+
+        console.log(`[TTS] Prepare request, hash: ${hash}`);
+
+        // Check if already cached
+        if (audioMetadataCache.has(hash) && fs.existsSync(audioPath)) {
+            const metadata = audioMetadataCache.get(hash);
+            console.log(`[TTS] Cache hit for ${hash}, size: ${metadata.size}`);
+            return res.json({
+                audioId: hash,
+                size: metadata.size,
+                duration: metadata.duration,
+                cached: true
+            });
+        }
+
+        // Generate audio
+        console.log(`[TTS] Generating audio for ${hash}...`);
+        const { stream } = await ttsService.getTTSStream(script, voice || DEFAULT_VOICE);
+
+        // Collect all chunks into a buffer
+        const chunks = [];
+
+        await new Promise((resolve, reject) => {
+            stream.on('data', (chunk) => chunks.push(chunk));
+            stream.on('end', resolve);
+            stream.on('error', reject);
+        });
+
+        const audioBuffer = Buffer.concat(chunks);
+
+        if (audioBuffer.length === 0) {
+            throw new Error('Empty audio generated');
+        }
+
+        // Save to file
+        fs.writeFileSync(audioPath, audioBuffer);
+
+        // Estimate duration (accurate duration requires parsing the MP3)
+        const duration = estimateDuration(script);
+
+        // Cache metadata
+        const metadata = {
+            size: audioBuffer.length,
+            duration: duration,
+            path: audioPath,
+            createdAt: Date.now()
+        };
+        audioMetadataCache.set(hash, metadata);
+
+        console.log(`[TTS] Audio cached: ${hash}, size: ${audioBuffer.length}, duration: ~${duration.toFixed(1)}s`);
+
+        res.json({
+            audioId: hash,
+            size: audioBuffer.length,
+            duration: duration,
+            cached: false
+        });
+
+    } catch (error) {
+        console.error('[TTS] Prepare error:', error);
+        res.status(500).json({ error: 'Failed to prepare audio', details: error.message });
+    }
+});
+
+/**
+ * @route GET /api/tts/audio/:audioId
+ * @desc Serve cached audio with Range request support (HTTP 206)
+ * @access Public
+ */
+router.get('/audio/:audioId', (req, res) => {
+    try {
+        const { audioId } = req.params;
+        const audioPath = path.join(CACHE_DIR, `${audioId}.mp3`);
+
+        // Check if file exists
+        if (!fs.existsSync(audioPath)) {
+            console.log(`[TTS] Audio not found: ${audioId}`);
+            return res.status(404).json({ error: 'Audio not found. Call /prepare first.' });
+        }
+
+        const stat = fs.statSync(audioPath);
+        const fileSize = stat.size;
+        const range = req.headers.range;
+
+        if (range) {
+            // Parse Range header: "bytes=start-end"
+            const parts = range.replace(/bytes=/, '').split('-');
+            const start = parseInt(parts[0], 10);
+            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+            const chunkSize = (end - start) + 1;
+
+            console.log(`[TTS] Range request: ${start}-${end}/${fileSize}`);
+
+            res.writeHead(206, {
+                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Length': chunkSize,
+                'Content-Type': 'audio/mpeg',
+                'Cache-Control': 'public, max-age=86400' // Cache for 24 hours
+            });
+
+            const stream = fs.createReadStream(audioPath, { start, end });
+            stream.pipe(res);
+
+        } else {
+            // No range header - send entire file
+            console.log(`[TTS] Full file request: ${fileSize} bytes`);
+
+            res.writeHead(200, {
+                'Content-Length': fileSize,
+                'Content-Type': 'audio/mpeg',
+                'Accept-Ranges': 'bytes',
+                'Cache-Control': 'public, max-age=86400'
+            });
+
+            fs.createReadStream(audioPath).pipe(res);
+        }
+
+    } catch (error) {
+        console.error('[TTS] Audio serve error:', error);
+        res.status(500).json({ error: 'Failed to serve audio' });
+    }
+});
+
+/**
+ * @route GET /api/tts/metadata/:audioId
+ * @desc Get metadata for cached audio (size, duration)
+ * @access Public
+ */
+router.get('/metadata/:audioId', (req, res) => {
+    try {
+        const { audioId } = req.params;
+
+        if (audioMetadataCache.has(audioId)) {
+            const metadata = audioMetadataCache.get(audioId);
+            return res.json({
+                audioId,
+                size: metadata.size,
+                duration: metadata.duration
+            });
+        }
+
+        // Try to get from file
+        const audioPath = path.join(CACHE_DIR, `${audioId}.mp3`);
+        if (fs.existsSync(audioPath)) {
+            const stat = fs.statSync(audioPath);
+            return res.json({
+                audioId,
+                size: stat.size,
+                duration: null // Unknown without metadata
+            });
+        }
+
+        res.status(404).json({ error: 'Audio not found' });
+
+    } catch (error) {
+        console.error('[TTS] Metadata error:', error);
+        res.status(500).json({ error: 'Failed to get metadata' });
+    }
+});
 
 /**
  * @route POST /api/tts/speak
