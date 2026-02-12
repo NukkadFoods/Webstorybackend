@@ -64,14 +64,21 @@ router.get('/sitemap.xml', async (req, res) => {
 `;
     });
 
-    // Add dynamic articles from database
+    // Add dynamic articles from database (NEWS SITEMAP: only last 48 hours)
     if (Article) {
       try {
-        // Get recent articles from your database (last 1000 articles for better SEO)
-        const recentArticles = await Article.find({})
+        // Google News requires only articles from last 48 hours
+        const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
+        const recentArticles = await Article.find({
+          $or: [
+            { publishedDate: { $gte: fortyEightHoursAgo } },
+            { createdAt: { $gte: fortyEightHoursAgo } }
+          ]
+        })
           .sort({ publishedDate: -1, createdAt: -1 })
-          .limit(1000)
-          .select('title url section publishedDate createdAt keywords abstract');
+          .limit(500) // Max 500 for news sitemap efficiency
+          .select('title url section publishedDate createdAt keywords abstract aiCommentary');
 
         // console.log(`Found ${recentArticles.length} articles for sitemap`);
 
@@ -195,11 +202,15 @@ router.get('/robots.txt', (req, res) => {
   const robotsTxt = `User-agent: *
 Allow: /
 
-# Sitemap
+# Sitemaps
 Sitemap: https://forexyy.com/sitemap.xml
+Sitemap: https://forexyy.com/news-sitemap.xml
 
 # Allow all major search engines
 User-agent: Googlebot
+Allow: /
+
+User-agent: Googlebot-News
 Allow: /
 
 User-agent: Bingbot
@@ -215,6 +226,28 @@ User-agent: Baiduspider
 Allow: /
 
 User-agent: YandexBot
+Allow: /
+
+# AI Search Engines (GEO - Generative Engine Optimization)
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: Anthropic-AI
+Allow: /
+
+User-agent: cohere-ai
 Allow: /
 
 # Allow crawling of all content
@@ -236,6 +269,164 @@ Host: forexyy.com`;
   });
 
   res.send(robotsTxt);
+});
+
+/**
+ * Google News Sitemap (strict 48-hour window)
+ * Optimized for Google News crawlers
+ */
+router.get('/news-sitemap.xml', async (req, res) => {
+  try {
+    const baseUrl = 'https://forexyy.com';
+    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+`;
+
+    if (Article) {
+      const newsArticles = await Article.find({
+        $or: [
+          { publishedDate: { $gte: fortyEightHoursAgo } },
+          { createdAt: { $gte: fortyEightHoursAgo } }
+        ]
+      })
+        .sort({ publishedDate: -1 })
+        .limit(1000)
+        .select('title url section publishedDate createdAt keywords');
+
+      newsArticles.forEach(article => {
+        const slug = article.url ?
+          article.url.split('/').pop().replace(/\.html?$/, '') :
+          article.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+        const articleDate = article.publishedDate || article.createdAt;
+        const isoDate = articleDate.toISOString();
+
+        const keywords = article.keywords?.length > 0 ?
+          article.keywords.slice(0, 10).join(', ') :
+          article.section || 'news';
+
+        xml += `  <url>
+    <loc>${baseUrl}/article/${encodeURIComponent(slug)}</loc>
+    <news:news>
+      <news:publication>
+        <news:name>Forexyy</news:name>
+        <news:language>en</news:language>
+      </news:publication>
+      <news:publication_date>${isoDate}</news:publication_date>
+      <news:title><![CDATA[${article.title}]]></news:title>
+      <news:keywords><![CDATA[${keywords}]]></news:keywords>
+    </news:news>
+  </url>
+`;
+      });
+    }
+
+    xml += '</urlset>';
+
+    res.set({
+      'Content-Type': 'application/xml',
+      'Cache-Control': 'public, max-age=900' // 15 minutes for news
+    });
+
+    res.send(xml);
+  } catch (error) {
+    console.error('Error generating news sitemap:', error);
+    res.status(500).send('Error generating news sitemap');
+  }
+});
+
+/**
+ * JSON-LD Schema endpoint for articles
+ * Returns NewsArticle + Speakable schema for SEO
+ */
+router.get('/api/schema/:articleId', async (req, res) => {
+  try {
+    const { articleId } = req.params;
+    const baseUrl = 'https://forexyy.com';
+
+    if (!Article) {
+      return res.status(500).json({ error: 'Article model not available' });
+    }
+
+    // Find article by ID or slug
+    let article = await Article.findOne({
+      $or: [
+        { _id: articleId },
+        { id: articleId },
+        { url: { $regex: articleId, $options: 'i' } }
+      ]
+    });
+
+    if (!article) {
+      return res.status(404).json({ error: 'Article not found' });
+    }
+
+    const slug = article.url ?
+      article.url.split('/').pop().replace(/\.html?$/, '') :
+      article.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+    const articleUrl = `${baseUrl}/article/${encodeURIComponent(slug)}`;
+    const publishDate = (article.publishedDate || article.createdAt).toISOString();
+
+    // Generate JSON-LD schema with NewsArticle + Speakable
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "NewsArticle",
+      "headline": article.title,
+      "description": article.abstract || article.title,
+      "url": articleUrl,
+      "datePublished": publishDate,
+      "dateModified": (article.updatedAt || article.createdAt).toISOString(),
+      "author": {
+        "@type": "Organization",
+        "name": article.byline || "Forexyy News",
+        "url": baseUrl
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "Forexyy",
+        "url": baseUrl,
+        "logo": {
+          "@type": "ImageObject",
+          "url": `${baseUrl}/logo.png`
+        }
+      },
+      "mainEntityOfPage": {
+        "@type": "WebPage",
+        "@id": articleUrl
+      },
+      "articleSection": article.section || "News",
+      "keywords": article.keywords?.join(', ') || article.section || "news",
+      // Speakable schema for voice assistants (Google Assistant, Siri)
+      "speakable": {
+        "@type": "SpeakableSpecification",
+        "cssSelector": [".article-title", ".article-summary", ".ai-commentary"]
+      }
+    };
+
+    // Add image if available
+    if (article.imageUrl) {
+      schema.image = {
+        "@type": "ImageObject",
+        "url": article.imageUrl,
+        "width": 1200,
+        "height": 630
+      };
+    }
+
+    // Add AI commentary as article body if available
+    if (article.aiCommentary) {
+      schema.articleBody = article.aiCommentary.substring(0, 5000);
+    }
+
+    res.json(schema);
+  } catch (error) {
+    console.error('Error generating schema:', error);
+    res.status(500).json({ error: 'Error generating schema' });
+  }
 });
 
 module.exports = router;
