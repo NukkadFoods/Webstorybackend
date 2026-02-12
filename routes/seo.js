@@ -122,7 +122,10 @@ router.get('/article/:slug(*)', async (req, res) => {
       publishedTime: publishDate?.toISOString(),
       author: article.byline || 'Forexyy News',
       keywords: article.keywords?.join(', ') || article.section,
-      articleBody: article.aiCommentary?.substring(0, 1000) || article.abstract
+      articleBody: article.aiCommentary?.substring(0, 1000) || article.abstract,
+      articleId: article._id?.toString() || article.id,
+      slug: slug,
+      hasAiCommentary: !!article.aiCommentary
     });
 
     res.send(html);
@@ -138,6 +141,34 @@ router.get('/article/:slug(*)', async (req, res) => {
 function generatePrerenderedHTML(meta) {
   const baseUrl = 'https://forexyy.com';
 
+  // Build VideoObject JSON-LD if article has AI commentary
+  const videoSchemaBlock = meta.hasAiCommentary && meta.articleId ? `
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "VideoObject",
+    "@id": "${meta.url}#video",
+    "name": "AI Commentary: ${escapeJson(meta.title)}",
+    "description": "Listen to our AI-powered deep dive into ${escapeJson(meta.title)}.",
+    "thumbnailUrl": [
+      "${meta.image}"
+    ],
+    "uploadDate": "${meta.publishedTime || new Date().toISOString()}",
+    "duration": "PT2M30S",
+    "contentUrl": "${baseUrl}/api/tts/audio/${meta.articleId}",
+    "embedUrl": "${meta.url}",
+    "encodingFormat": "audio/mpeg",
+    "publisher": {
+      "@type": "Organization",
+      "name": "Forexyy",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "${baseUrl}/logo.png"
+      }
+    }
+  }
+  </script>` : '';
+
   return `<!DOCTYPE html>
 <html lang="en" prefix="og: http://ogp.me/ns#">
 <head>
@@ -145,6 +176,37 @@ function generatePrerenderedHTML(meta) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(meta.title)} | Forexyy</title>
   <meta name="description" content="${escapeHtml(meta.description)}">
+
+  <!-- JSON-LD Schema: VideoObject (positioned high for Googlebot) -->
+  ${videoSchemaBlock}
+
+  <!-- JSON-LD Schema: NewsArticle -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "NewsArticle",
+    "@id": "${meta.url}",
+    "headline": "${escapeJson(meta.title)}",
+    "description": "${escapeJson(meta.description)}",
+    "url": "${meta.url}",
+    "image": "${meta.image}",
+    ${meta.publishedTime ? `"datePublished": "${meta.publishedTime}",` : ''}
+    "author": {
+      "@type": "Organization",
+      "name": "${escapeJson(meta.author || 'Forexyy News')}"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "Forexyy",
+      "logo": { "@type": "ImageObject", "url": "${baseUrl}/logo.png" }
+    },
+    "speakable": {
+      "@type": "SpeakableSpecification",
+      "cssSelector": [".article-title", ".article-summary", ".ai-commentary"]
+    }${meta.hasAiCommentary && meta.articleId ? `,
+    "video": { "@id": "${meta.url}#video" }` : ''}
+  }
+  </script>
 
   <!-- Open Graph / Facebook -->
   <meta property="og:type" content="${meta.type || 'article'}">
@@ -171,32 +233,6 @@ function generatePrerenderedHTML(meta) {
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="${meta.url}">
   ${meta.keywords ? `<meta name="keywords" content="${escapeHtml(meta.keywords)}">` : ''}
-
-  <!-- JSON-LD Schema -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "NewsArticle",
-    "headline": "${escapeJson(meta.title)}",
-    "description": "${escapeJson(meta.description)}",
-    "url": "${meta.url}",
-    "image": "${meta.image}",
-    ${meta.publishedTime ? `"datePublished": "${meta.publishedTime}",` : ''}
-    "author": {
-      "@type": "Organization",
-      "name": "${escapeJson(meta.author || 'Forexyy News')}"
-    },
-    "publisher": {
-      "@type": "Organization",
-      "name": "Forexyy",
-      "logo": { "@type": "ImageObject", "url": "${baseUrl}/logo.png" }
-    },
-    "speakable": {
-      "@type": "SpeakableSpecification",
-      "cssSelector": [".article-title", ".article-summary", ".ai-commentary"]
-    }
-  }
-  </script>
 </head>
 <body>
   <article>
@@ -424,6 +460,7 @@ Allow: /
 # Sitemaps
 Sitemap: https://forexyy.com/sitemap.xml
 Sitemap: https://forexyy.com/news-sitemap.xml
+Sitemap: https://forexyy.com/video-sitemap.xml
 
 # Allow all major search engines
 User-agent: Googlebot
@@ -591,9 +628,10 @@ router.get('/api/schema/:articleId', async (req, res) => {
     const publishDate = (article.publishedDate || article.createdAt).toISOString();
 
     // Generate JSON-LD schema with NewsArticle + Speakable
-    const schema = {
+    const newsArticleSchema = {
       "@context": "https://schema.org",
       "@type": "NewsArticle",
+      "@id": articleUrl,
       "headline": article.title,
       "description": article.abstract || article.title,
       "url": articleUrl,
@@ -628,7 +666,7 @@ router.get('/api/schema/:articleId', async (req, res) => {
 
     // Add image if available
     if (article.imageUrl) {
-      schema.image = {
+      newsArticleSchema.image = {
         "@type": "ImageObject",
         "url": article.imageUrl,
         "width": 1200,
@@ -638,13 +676,114 @@ router.get('/api/schema/:articleId', async (req, res) => {
 
     // Add AI commentary as article body if available
     if (article.aiCommentary) {
-      schema.articleBody = article.aiCommentary.substring(0, 5000);
+      newsArticleSchema.articleBody = article.aiCommentary.substring(0, 5000);
     }
 
-    res.json(schema);
+    // Build VideoObject for AI commentary
+    const videoSchema = article.aiCommentary ? {
+      "@context": "https://schema.org",
+      "@type": "VideoObject",
+      "@id": `${articleUrl}#video`,
+      "name": `AI Commentary: ${article.title}`,
+      "description": `Listen to our AI-powered deep dive into ${article.title}.`,
+      "thumbnailUrl": [article.imageUrl || `${baseUrl}/og-image.png`],
+      "uploadDate": publishDate,
+      "duration": "PT2M30S",
+      "contentUrl": `${baseUrl}/api/tts/audio/${article._id || article.id}`,
+      "embedUrl": articleUrl,
+      "encodingFormat": "audio/mpeg",
+      "publisher": {
+        "@type": "Organization",
+        "name": "Forexyy",
+        "logo": {
+          "@type": "ImageObject",
+          "url": `${baseUrl}/logo.png`
+        }
+      }
+    } : null;
+
+    // Link VideoObject from NewsArticle via @id
+    if (videoSchema) {
+      newsArticleSchema.video = { "@id": `${articleUrl}#video` };
+    }
+
+    // Return both schemas as an array (Google supports @graph or array)
+    const response = videoSchema
+      ? [newsArticleSchema, videoSchema]
+      : newsArticleSchema;
+
+    res.json(response);
   } catch (error) {
     console.error('Error generating schema:', error);
     res.status(500).json({ error: 'Error generating schema' });
+  }
+});
+
+/**
+ * Video Sitemap Generator
+ * Lists articles with AI commentary as video content for Google Video indexing
+ */
+router.get('/video-sitemap.xml', async (req, res) => {
+  try {
+    const baseUrl = 'https://forexyy.com';
+
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">
+`;
+
+    if (Article) {
+      // Get recent articles that have AI commentary (these are the "videos")
+      const articlesWithCommentary = await Article.find({
+        aiCommentary: { $exists: true, $ne: null, $ne: '' }
+      })
+        .sort({ publishedDate: -1, createdAt: -1 })
+        .limit(500)
+        .select('title url abstract aiCommentary imageUrl publishedDate createdAt _id section keywords');
+
+      articlesWithCommentary.forEach(article => {
+        const slug = article.url
+          ? article.url.split('/').pop().replace(/\.html?$/, '')
+          : article.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+        const articleUrl = `${baseUrl}/article/${encodeURIComponent(slug)}`;
+        const publishDate = (article.publishedDate || article.createdAt);
+        const isoDate = publishDate ? publishDate.toISOString() : new Date().toISOString();
+        const description = (article.abstract || article.aiCommentary?.substring(0, 200) || article.title)
+          .replace(/[<>&'"]/g, ' ').substring(0, 2048);
+        const thumbnailUrl = article.imageUrl || `${baseUrl}/og-image.png`;
+        const keywords = article.keywords?.slice(0, 10).join(', ') || article.section || 'news';
+
+        xml += `  <url>
+    <loc>${articleUrl}</loc>
+    <video:video>
+      <video:thumbnail_loc>${thumbnailUrl}</video:thumbnail_loc>
+      <video:title><![CDATA[AI Commentary: ${article.title}]]></video:title>
+      <video:description><![CDATA[${description}]]></video:description>
+      <video:content_loc>${baseUrl}/api/tts/audio/${article._id}</video:content_loc>
+      <video:player_loc>${articleUrl}</video:player_loc>
+      <video:duration>150</video:duration>
+      <video:publication_date>${isoDate}</video:publication_date>
+      <video:family_friendly>yes</video:family_friendly>
+      <video:live>no</video:live>
+      <video:tag>${keywords}</video:tag>
+    </video:video>
+  </url>
+`;
+      });
+    }
+
+    xml += '</urlset>';
+
+    res.set({
+      'Content-Type': 'application/xml',
+      'Cache-Control': 'public, max-age=1800' // Cache for 30 minutes
+    });
+
+    res.send(xml);
+  } catch (error) {
+    console.error('Error generating video sitemap:', error);
+    res.status(500).send('Error generating video sitemap');
   }
 });
 
