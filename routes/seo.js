@@ -319,25 +319,16 @@ router.get('/sitemap.xml', async (req, res) => {
 `;
     });
 
-    // Add dynamic articles from database (NEWS SITEMAP: only last 48 hours)
+    // Add ALL articles from database (general sitemap = archival, no 48h limit)
+    // Articles that age out of news-sitemap.xml stay discoverable here (FIFO pattern)
     if (Article) {
       try {
-        // Google News requires only articles from last 48 hours
-        const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
-
-        const recentArticles = await Article.find({
-          $or: [
-            { publishedDate: { $gte: fortyEightHoursAgo } },
-            { createdAt: { $gte: fortyEightHoursAgo } }
-          ]
-        })
+        const allArticles = await Article.find({})
           .sort({ publishedDate: -1, createdAt: -1 })
-          .limit(500) // Max 500 for news sitemap efficiency
-          .select('title url section publishedDate createdAt keywords abstract aiCommentary');
+          .limit(5000) // General sitemap can hold more URLs
+          .select('title url section publishedDate createdAt imageUrl');
 
-        // console.log(`Found ${recentArticles.length} articles for sitemap`);
-
-        recentArticles.forEach(article => {
+        allArticles.forEach(article => {
           // Create SEO-friendly slug from URL or title
           const slug = article.url ?
             article.url.split('/').pop().replace(/\.html?$/, '') :
@@ -347,91 +338,23 @@ router.get('/sitemap.xml', async (req, res) => {
           const articleDate = article.publishedDate || article.createdAt;
           const formattedDate = articleDate.toISOString().split('T')[0];
 
-          // Extract keywords for news schema
-          const articleKeywords = article.keywords && article.keywords.length > 0 ?
-            article.keywords.join(', ') :
-            `${article.section || 'news'}, breaking news, ${article.title.split(' ').slice(0, 3).join(', ')}`;
-
           xml += `  <url>
-    <loc>${baseUrl}/article/${slug}</loc>
+    <loc>${baseUrl}/article/${encodeURIComponent(slug)}</loc>
     <lastmod>${formattedDate}</lastmod>
     <changefreq>daily</changefreq>
-    <priority>0.8</priority>
-    <news:news>
-      <news:publication>
-        <news:name>Forexyy</news:name>
-        <news:language>en</news:language>
-      </news:publication>
-      <news:publication_date>${formattedDate}</news:publication_date>
-      <news:title><![CDATA[${article.title}]]></news:title>
-      <news:keywords><![CDATA[${articleKeywords}]]></news:keywords>
-    </news:news>
+    <priority>0.8</priority>${article.imageUrl ? `
+    <image:image>
+      <image:loc>${article.imageUrl}</image:loc>
+      <image:title><![CDATA[${article.title}]]></image:title>
+    </image:image>` : ''}
   </url>
 `;
         });
 
       } catch (dbError) {
-        // console.log('Database query failed, using static samples:', dbError.message);
+        console.error('Sitemap DB query failed:', dbError.message);
       }
     }
-
-    // Always add some sample articles for demonstration and fallback
-    const sampleArticles = [
-      {
-        slug: 'breaking-news-politics-update',
-        title: 'Breaking News: Politics Update',
-        category: 'politics',
-        date: currentDate,
-        keywords: 'politics, breaking news, government, policy'
-      },
-      {
-        slug: 'stock-market-analysis-today',
-        title: 'Stock Market Analysis Today',
-        category: 'finance',
-        date: currentDate,
-        keywords: 'finance, stocks, market, trading, investment'
-      },
-      {
-        slug: 'technology-innovation-ai-breakthrough',
-        title: 'Technology Innovation: AI Breakthrough',
-        category: 'technology',
-        date: currentDate,
-        keywords: 'technology, AI, innovation, artificial intelligence'
-      },
-      {
-        slug: 'wall-street-trading-update',
-        title: 'Wall Street Trading Update',
-        category: 'wallstreet',
-        date: currentDate,
-        keywords: 'wall street, trading, finance, stocks'
-      },
-      {
-        slug: 'healthcare-policy-changes',
-        title: 'Healthcare Policy Changes',
-        category: 'health',
-        date: currentDate,
-        keywords: 'health, healthcare, policy, medical'
-      }
-    ];
-
-    sampleArticles.forEach(article => {
-      xml += `  <url>
-    <loc>${baseUrl}/article/${article.slug}</loc>
-    <lastmod>${article.date}</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.8</priority>
-    <news:news>
-      <news:publication>
-        <news:name>Forexyy</news:name>
-        <news:language>en</news:language>
-      </news:publication>
-      <news:publication_date>${article.date}</news:publication_date>
-      <news:title><![CDATA[${article.title}]]></news:title>
-      <news:keywords><![CDATA[${article.keywords}]]></news:keywords>
-    </news:news>
-  </url>
-`;
-    });
 
     // Close XML
     xml += '</urlset>';
