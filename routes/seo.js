@@ -10,6 +10,186 @@ try {
   Article = null;
 }
 
+// Bot User Agents for pre-rendering
+const BOT_USER_AGENTS = [
+  'googlebot', 'bingbot', 'slurp', 'duckduckbot', 'baiduspider', 'yandexbot',
+  'facebookexternalhit', 'twitterbot', 'linkedinbot', 'whatsapp', 'telegrambot',
+  'pinterest', 'discordbot', 'slackbot', 'redditbot',
+  'gptbot', 'chatgpt', 'perplexitybot', 'claudebot', 'anthropic',
+  'instagram', 'JEODE'
+];
+
+/**
+ * Check if request is from a bot/crawler
+ */
+function isBot(userAgent) {
+  if (!userAgent) return false;
+  const ua = userAgent.toLowerCase();
+  return BOT_USER_AGENTS.some(bot => ua.includes(bot));
+}
+
+/**
+ * Pre-render article page for social crawlers
+ * Returns full HTML with OG tags for bots
+ */
+router.get('/article/:slug', async (req, res, next) => {
+  const userAgent = req.headers['user-agent'] || '';
+
+  // Only pre-render for bots
+  if (!isBot(userAgent)) {
+    return next(); // Let frontend handle it
+  }
+
+  try {
+    const { slug } = req.params;
+    const baseUrl = 'https://forexyy.com';
+
+    if (!Article) {
+      return next();
+    }
+
+    // Find article by slug or URL
+    const decodedSlug = decodeURIComponent(slug);
+    let article = await Article.findOne({
+      $or: [
+        { url: { $regex: decodedSlug, $options: 'i' } },
+        { title: { $regex: decodedSlug.replace(/-/g, ' '), $options: 'i' } },
+        { id: decodedSlug },
+        { _id: decodedSlug }
+      ]
+    });
+
+    if (!article) {
+      // Return default OG tags if article not found
+      return res.send(generatePrerenderedHTML({
+        title: 'Article Not Found | Forexyy',
+        description: 'The requested article could not be found.',
+        image: `${baseUrl}/og-image.png`,
+        url: `${baseUrl}/article/${slug}`
+      }));
+    }
+
+    const articleUrl = `${baseUrl}/article/${encodeURIComponent(slug)}`;
+    const publishDate = article.publishedDate || article.createdAt;
+
+    // Generate pre-rendered HTML for bots
+    const html = generatePrerenderedHTML({
+      title: article.title,
+      description: article.abstract || article.aiCommentary?.substring(0, 200) || article.title,
+      image: article.imageUrl || `${baseUrl}/og-image.png`,
+      url: articleUrl,
+      type: 'article',
+      section: article.section,
+      publishedTime: publishDate?.toISOString(),
+      author: article.byline || 'Forexyy News',
+      keywords: article.keywords?.join(', ') || article.section,
+      articleBody: article.aiCommentary?.substring(0, 1000) || article.abstract
+    });
+
+    res.send(html);
+  } catch (error) {
+    console.error('Pre-render error:', error);
+    next();
+  }
+});
+
+/**
+ * Generate pre-rendered HTML with OG tags for social crawlers
+ */
+function generatePrerenderedHTML(meta) {
+  const baseUrl = 'https://forexyy.com';
+
+  return `<!DOCTYPE html>
+<html lang="en" prefix="og: http://ogp.me/ns#">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(meta.title)} | Forexyy</title>
+  <meta name="description" content="${escapeHtml(meta.description)}">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="${meta.type || 'article'}">
+  <meta property="og:url" content="${meta.url}">
+  <meta property="og:title" content="${escapeHtml(meta.title)}">
+  <meta property="og:description" content="${escapeHtml(meta.description)}">
+  <meta property="og:image" content="${meta.image}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="Forexyy">
+  <meta property="og:locale" content="en_US">
+  ${meta.publishedTime ? `<meta property="article:published_time" content="${meta.publishedTime}">` : ''}
+  ${meta.section ? `<meta property="article:section" content="${meta.section}">` : ''}
+  ${meta.author ? `<meta property="article:author" content="${escapeHtml(meta.author)}">` : ''}
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:url" content="${meta.url}">
+  <meta name="twitter:title" content="${escapeHtml(meta.title)}">
+  <meta name="twitter:description" content="${escapeHtml(meta.description)}">
+  <meta name="twitter:image" content="${meta.image}">
+
+  <!-- Additional SEO -->
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="${meta.url}">
+  ${meta.keywords ? `<meta name="keywords" content="${escapeHtml(meta.keywords)}">` : ''}
+
+  <!-- JSON-LD Schema -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "NewsArticle",
+    "headline": "${escapeJson(meta.title)}",
+    "description": "${escapeJson(meta.description)}",
+    "url": "${meta.url}",
+    "image": "${meta.image}",
+    ${meta.publishedTime ? `"datePublished": "${meta.publishedTime}",` : ''}
+    "author": {
+      "@type": "Organization",
+      "name": "${escapeJson(meta.author || 'Forexyy News')}"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "Forexyy",
+      "logo": { "@type": "ImageObject", "url": "${baseUrl}/logo.png" }
+    },
+    "speakable": {
+      "@type": "SpeakableSpecification",
+      "cssSelector": [".article-title", ".article-summary", ".ai-commentary"]
+    }
+  }
+  </script>
+</head>
+<body>
+  <article>
+    <h1 class="article-title">${escapeHtml(meta.title)}</h1>
+    <p class="article-summary">${escapeHtml(meta.description)}</p>
+    ${meta.articleBody ? `<div class="ai-commentary">${escapeHtml(meta.articleBody)}</div>` : ''}
+    ${meta.image ? `<img src="${meta.image}" alt="${escapeHtml(meta.title)}">` : ''}
+  </article>
+  <p>For the full experience with AI audio commentary, please enable JavaScript or visit <a href="${baseUrl}">forexyy.com</a></p>
+</body>
+</html>`;
+}
+
+function escapeHtml(text) {
+  if (!text) return '';
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function escapeJson(text) {
+  if (!text) return '';
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r');
+}
+
 /**
  * Dynamic Sitemap Generator for Forexyy.com
  * Generates XML sitemap with current articles and categories
