@@ -30,34 +30,73 @@ function isBot(userAgent) {
 
 /**
  * Pre-render article page for social crawlers
- * Returns full HTML with OG tags for bots
+ * Called by Vercel when bot user-agent is detected
+ * Always returns full HTML with OG tags (no bot check - Vercel handles that)
  */
-router.get('/article/:slug', async (req, res, next) => {
-  const userAgent = req.headers['user-agent'] || '';
-
-  // Only pre-render for bots
-  if (!isBot(userAgent)) {
-    return next(); // Let frontend handle it
-  }
-
+router.get('/article/:slug(*)', async (req, res) => {
   try {
     const { slug } = req.params;
     const baseUrl = 'https://forexyy.com';
 
+    console.log(`[SEO] Pre-rendering article: ${slug}`);
+
     if (!Article) {
-      return next();
+      console.log('[SEO] Article model not available');
+      return res.send(generatePrerenderedHTML({
+        title: 'Forexyy News',
+        description: 'AI-powered news analysis with audio commentary.',
+        image: `${baseUrl}/og-image.png`,
+        url: `${baseUrl}/article/${slug}`
+      }));
     }
 
-    // Find article by slug or URL
+    // Decode the URL-encoded slug
     const decodedSlug = decodeURIComponent(slug);
-    let article = await Article.findOne({
-      $or: [
-        { url: { $regex: decodedSlug, $options: 'i' } },
-        { title: { $regex: decodedSlug.replace(/-/g, ' '), $options: 'i' } },
-        { id: decodedSlug },
-        { _id: decodedSlug }
-      ]
-    });
+    console.log(`[SEO] Decoded slug: ${decodedSlug}`);
+
+    // Try multiple matching strategies
+    let article = null;
+
+    // 1. Try exact URL match first
+    if (decodedSlug.includes('http')) {
+      article = await Article.findOne({ url: decodedSlug });
+    }
+
+    // 2. Try partial URL match
+    if (!article) {
+      const urlPart = decodedSlug.split('/').pop()?.replace(/\.html?$/, '');
+      if (urlPart && urlPart.length > 10) {
+        article = await Article.findOne({
+          url: { $regex: urlPart, $options: 'i' }
+        });
+      }
+    }
+
+    // 3. Try title-based slug match
+    if (!article) {
+      const titleSearch = decodedSlug
+        .replace(/https?:\/\/[^/]+\/?/g, '') // Remove URL prefix
+        .replace(/[-_]/g, ' ')
+        .replace(/\.(html?|php|aspx?)$/i, '')
+        .trim();
+
+      if (titleSearch.length > 5) {
+        article = await Article.findOne({
+          title: { $regex: titleSearch.substring(0, 50), $options: 'i' }
+        });
+      }
+    }
+
+    // 4. Try MongoDB ID match
+    if (!article && decodedSlug.match(/^[a-f0-9]{24}$/i)) {
+      article = await Article.findById(decodedSlug);
+    }
+
+    // 5. Get most recent article as fallback
+    if (!article) {
+      console.log('[SEO] No exact match, using most recent article');
+      article = await Article.findOne().sort({ publishedDate: -1, createdAt: -1 });
+    }
 
     if (!article) {
       // Return default OG tags if article not found
