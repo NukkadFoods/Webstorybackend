@@ -284,30 +284,55 @@ const findArticleByIdentifier = async (identifier) => {
     if (!isConnected()) {
       await connectToMongoDB();
     }
-    
+
     let article = null;
-    
-    // Try different search strategies
-    // 1. MongoDB ObjectId
+    const decodedIdentifier = decodeURIComponent(identifier);
+
+    // 1. MongoDB ObjectId (24 hex characters) - FASTEST
     if (identifier.match(/^[0-9a-fA-F]{24}$/)) {
       article = await Article.findById(identifier);
       if (article) return article;
     }
-    
-    // 2. URL (exact match)
-    const decodedIdentifier = decodeURIComponent(identifier);
-    article = await Article.findOne({ url: decodedIdentifier });
+
+    // 2. NEW: Title-based slug with hash (e.g., "gail-slater-antitrust-justice-abc123")
+    const slugMatch = identifier.match(/^(.+)-([a-z0-9]{4,8})$/);
+    if (slugMatch && !identifier.includes('http')) {
+      const titleSlug = slugMatch[1];
+      // Convert slug back to search words
+      const titleWords = titleSlug.split('-').filter(w => w.length > 2);
+
+      if (titleWords.length >= 2) {
+        // Search for articles containing these key words in title
+        const searchPattern = titleWords.slice(0, 4).join('.*');
+        article = await Article.findOne({
+          title: { $regex: searchPattern, $options: 'i' }
+        });
+        if (article) return article;
+      }
+    }
+
+    // 3. URL (exact match) - for legacy URL-based IDs
+    if (decodedIdentifier.includes('http')) {
+      article = await Article.findOne({ url: decodedIdentifier });
+      if (article) return article;
+
+      // Try partial URL match
+      article = await Article.findOne({
+        url: { $regex: decodedIdentifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' }
+      });
+      if (article) return article;
+    }
+
+    // 4. Title match (convert hyphens to spaces for slug-style searches)
+    const titleSearchPattern = decodedIdentifier
+      .replace(/-/g, '[ -]')
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    article = await Article.findOne({
+      title: { $regex: titleSearchPattern, $options: 'i' }
+    });
     if (article) return article;
-    
-    // 3. URL contains identifier
-    article = await Article.findOne({ url: { $regex: decodedIdentifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } });
-    if (article) return article;
-    
-    // 4. Title match
-    article = await Article.findOne({ title: { $regex: decodedIdentifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } });
-    if (article) return article;
-    
-    // 5. Try finding by custom ID fields that might exist
+
+    // 5. Try finding by custom ID fields
     article = await Article.findOne({
       $or: [
         { id: identifier },

@@ -40,15 +40,16 @@ const fetchFromNYT = async (endpoint) => {
 const normalizeArticleFormat = (article) => {
   const articleObj = article.toObject ? article.toObject() : { ...article };
 
-  // Ensure id field exists - use URL as the primary ID for consistent frontend routing
-  // URLs are unique and work better than NYT URIs or MongoDB _ids for browser navigation
-  if (articleObj.url) {
-    articleObj.id = articleObj.url;
-  } else if (articleObj.uri) {
-    articleObj.id = articleObj.uri;
-  } else if (articleObj._id) {
+  // FIXED: Use MongoDB _id as primary identifier for clean URLs
+  // This prevents ugly URLs like /article/https%3A%2F%2Fwww.nytimes.com%2F...
+  if (articleObj._id) {
     articleObj.id = articleObj._id.toString();
+  } else if (articleObj.uri) {
+    // Use last part of URI if available
+    const uriParts = articleObj.uri.split('/');
+    articleObj.id = uriParts[uriParts.length - 1] || articleObj.uri;
   }
+  // Note: We deliberately DON'T use articleObj.url as id anymore to avoid URL-encoded slugs
 
   // CRITICAL: Ensure imageUrl field exists (for home category compatibility)
   if (!articleObj.imageUrl && articleObj.multimedia && articleObj.multimedia.length > 0) {
