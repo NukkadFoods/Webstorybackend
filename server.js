@@ -16,11 +16,18 @@ const http = require('http');
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Initialize cron jobs
-// CronService.initializeJobs();
+// Initialize cron jobs - ONLY on Render (not Vercel serverless)
+// Vercel uses HTTP triggers, Render uses internal node-cron
+if (!process.env.VERCEL) {
+  CronService.initializeJobs();
+  console.log('✅ Internal cron jobs started (Render)');
 
-// Start section rotation worker (1 article per section every 5 minutes)
-// sectionRotationWorker.start();
+  // Start section rotation worker (processes sections every 3 minutes)
+  sectionRotationWorker.start();
+  console.log('✅ Section rotation worker started (Render)');
+} else {
+  console.log('⏭️ Internal crons skipped (Vercel serverless)');
+}
 
 // Initialize Groq client only if API key is available (legacy fallback)
 let groq = null;
@@ -708,17 +715,13 @@ dbConnectionPromise
     if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
       app.listen(port, () => {
         console.log(`🚀 Optimized server running on port ${port} with database ${isDbConnected ? 'connected' : 'disconnected'}`);
-        // Start newsletter scheduler for hourly emails only on Render (not Vercel)
-        // On Vercel, newsletter is triggered via HTTP endpoint only
-        if (isDbConnected && !process.env.VERCEL) {
-          NewsletterScheduler.start();
-          console.log('📧 Newsletter internal scheduler started (Render only)');
-        }
+        // Newsletter scheduler DISABLED on Render (SMTP blocked)
+        // Newsletter runs ONLY via Vercel HTTP endpoint
+        console.log('📧 Newsletter: disabled on Render (use Vercel cron endpoint)');
       });
     } else {
       // Vercel serverless - NO internal schedulers, only HTTP endpoints
       console.log(`🚀 Vercel serverless ready - newsletter via HTTP endpoint only`);
-      // DO NOT start NewsletterScheduler on Vercel - it will be triggered by Vercel Cron URL
     }
   })
   .catch((error) => {
