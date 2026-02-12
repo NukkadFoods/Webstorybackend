@@ -10,13 +10,22 @@ const Article = require('../models/article');
 const DEFAULT_VOICE = 'en-US-AriaNeural';
 
 // ============ AUDIO CACHE ============
-const CACHE_DIR = path.join(__dirname, '../cache/audio');
+// Use /tmp for serverless environments (Vercel), local path for development/Render
+const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
+const CACHE_DIR = isServerless
+    ? '/tmp/audio-cache'
+    : path.join(__dirname, '../cache/audio');
 const audioMetadataCache = new Map(); // hash -> { size, duration, path, createdAt }
 
-// Ensure cache directory exists
-if (!fs.existsSync(CACHE_DIR)) {
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
-    console.log('[TTS] Created audio cache directory:', CACHE_DIR);
+// Ensure cache directory exists (wrapped in try-catch for serverless safety)
+try {
+    if (!fs.existsSync(CACHE_DIR)) {
+        fs.mkdirSync(CACHE_DIR, { recursive: true });
+        console.log('[TTS] Created audio cache directory:', CACHE_DIR);
+    }
+} catch (err) {
+    console.warn('[TTS] Could not create cache directory:', err.message);
+    // Continue without file caching - in-memory cache will still work
 }
 
 // Generate hash for text
