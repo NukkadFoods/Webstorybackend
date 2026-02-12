@@ -14,15 +14,20 @@ const redisLoadBalancer = require('../config/redisLoadBalancer');
 const { generateGroqCommentary, getFallbackCommentary } = require('../services/aiService');
 const cacheService = require('../services/cache');
 
-// Skip BullMQ entirely when Redis is disabled (local development)
+// Skip BullMQ entirely when Redis is disabled OR on Vercel (serverless)
 const REDIS_DISABLED = process.env.REDIS_DISABLED === 'true';
+const IS_VERCEL = !!process.env.VERCEL;
 
 let connection = null;
-if (!REDIS_DISABLED) {
+if (!REDIS_DISABLED && !IS_VERCEL) {
     redisLoadBalancer.initialize();
     connection = redisLoadBalancer.getRawConnection();
 } else {
-    console.log('⏭️ BullMQ SKIPPED - Redis disabled for local dev');
+    if (IS_VERCEL) {
+        console.log('⏭️ BullMQ SKIPPED - Vercel serverless (workers disabled)');
+    } else {
+        console.log('⏭️ BullMQ SKIPPED - Redis disabled');
+    }
 }
 
 // ============================================================================
@@ -182,7 +187,11 @@ if (!REDIS_DISABLED && connection) {
       max: 10,
       duration: 60000
     },
-    concurrency: 2
+    concurrency: 2,
+    // Reduce Redis polling when queue is empty (saves ~90% of idle requests)
+    drainDelay: 30000,        // Wait 30s before checking again when queue is empty
+    lockDuration: 60000,      // Lock jobs for 60s (prevents duplicate processing)
+    stalledInterval: 60000,   // Check for stalled jobs every 60s (not every 5s)
   });
 
   worker.on('completed', (job, result) => {
@@ -264,6 +273,9 @@ const addToQueue = async (article, options = {}) => {
 
   const priority = options.priority || calculatePriority(article);
 
+  // Use articleId as jobId for idempotency - prevents duplicate jobs for same article
+  const jobId = `commentary-${articleId.toString()}`;
+
   const job = await commentaryQueue.add('generate-commentary', {
     articleId: articleId.toString(),
     title: article.title,
@@ -272,12 +284,13 @@ const addToQueue = async (article, options = {}) => {
     priority,
     article: article
   }, {
+    jobId,  // Idempotency key - BullMQ ignores duplicate jobIds
     priority,
     delay: options.delay || 0,
     ...options
   });
 
-  console.log(`📝 Added article "${article.title.substring(0, 40)}..." to queue (Job ID: ${job.id}, Priority: ${priority})`);
+  console.log(`📝 Added article "${article.title.substring(0, 40)}..." to queue (Job ID: ${jobId}, Priority: ${priority})`);
 
   return job;
 };

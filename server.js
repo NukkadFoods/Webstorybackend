@@ -164,9 +164,20 @@ app.use('/api/youtube', youtubeRoutes);
 app.use('/', seoRoutes); // SEO routes for sitemap.xml and robots.txt
 
 // Vercel Cron endpoint for newsletter (GET - for Vercel cron)
+// This endpoint runs ONLY on Vercel (newsletter), disabled on Render
 app.get('/api/cron/newsletter', async (req, res) => {
   try {
-    // console.log('🕐 Vercel cron job triggered for newsletter sending at 8:27 AM IST (GET)');
+    // Environment lock: Newsletter cron runs ONLY on Vercel
+    // Render handles article crons, Vercel handles newsletter
+    if (!process.env.VERCEL) {
+      return res.status(200).json({
+        success: true,
+        skipped: true,
+        message: 'Newsletter cron runs only on Vercel (use internal scheduler on Render)',
+        environment: 'render',
+        timestamp: new Date().toISOString()
+      });
+    }
 
     // Verify this is a cron request from Vercel
     const userAgent = req.headers['user-agent'] || '';
@@ -201,9 +212,19 @@ app.get('/api/cron/newsletter', async (req, res) => {
 });
 
 // Vercel Cron endpoint for newsletter (POST - for manual testing)
+// This endpoint runs ONLY on Vercel
 app.post('/api/cron/newsletter', async (req, res) => {
   try {
-    // console.log('🕐 Vercel cron job triggered for newsletter sending at 8:27 AM IST');
+    // Environment lock: Newsletter cron runs ONLY on Vercel
+    if (!process.env.VERCEL) {
+      return res.status(200).json({
+        success: true,
+        skipped: true,
+        message: 'Newsletter cron runs only on Vercel',
+        environment: 'render',
+        timestamp: new Date().toISOString()
+      });
+    }
 
     // Verify this is a cron request from Vercel or allow manual testing
     const userAgent = req.headers['user-agent'] || '';
@@ -236,12 +257,22 @@ app.post('/api/cron/newsletter', async (req, res) => {
     });
   }
 });
-// ✨ Vercel Cron endpoint for section rotation (GET)
+// Section rotation endpoint (runs on Render only, NOT Vercel)
 app.get('/api/cron/rotate-sections', async (req, res) => {
   try {
-    // console.log('🔄 Vercel cron job triggered for section rotation (GET)');
+    // Environment lock: Article crons run ONLY on Render
+    // Vercel is reserved for newsletter only
+    if (process.env.VERCEL) {
+      return res.status(200).json({
+        success: true,
+        skipped: true,
+        message: 'Article crons disabled on Vercel (runs on Render only)',
+        environment: 'vercel',
+        timestamp: new Date().toISOString()
+      });
+    }
 
-    // Verify this is a cron request from Vercel
+    // Verify this is a cron request
     const userAgent = req.headers['user-agent'] || '';
     if (!userAgent.includes('vercel-cron') && !userAgent.includes('curl')) {
       // console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
@@ -274,12 +305,22 @@ app.get('/api/cron/rotate-sections', async (req, res) => {
   }
 });
 
-// 📝 Vercel Cron endpoint for fill-threshold (GET)
+// Fill-threshold endpoint (runs on Render only, NOT Vercel)
 app.get('/api/cron/fill-threshold', async (req, res) => {
   try {
-    // console.log('📝 Vercel cron job triggered for fill-threshold (GET)');
+    // Environment lock: Article crons run ONLY on Render
+    // Vercel is reserved for newsletter only
+    if (process.env.VERCEL) {
+      return res.status(200).json({
+        success: true,
+        skipped: true,
+        message: 'Article crons disabled on Vercel (runs on Render only)',
+        environment: 'vercel',
+        timestamp: new Date().toISOString()
+      });
+    }
 
-    // Verify this is a cron request from Vercel
+    // Verify this is a cron request
     const userAgent = req.headers['user-agent'] || '';
     if (!userAgent.includes('vercel-cron') && !userAgent.includes('curl')) {
       // console.log('⚠️ Non-Vercel cron request detected from:', userAgent);
@@ -667,17 +708,17 @@ dbConnectionPromise
     if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
       app.listen(port, () => {
         console.log(`🚀 Optimized server running on port ${port} with database ${isDbConnected ? 'connected' : 'disconnected'}`);
-        // Start newsletter scheduler for hourly emails only if DB is connected
-        if (isDbConnected) {
+        // Start newsletter scheduler for hourly emails only on Render (not Vercel)
+        // On Vercel, newsletter is triggered via HTTP endpoint only
+        if (isDbConnected && !process.env.VERCEL) {
           NewsletterScheduler.start();
+          console.log('📧 Newsletter internal scheduler started (Render only)');
         }
       });
     } else {
-      console.log(`🚀 Optimized serverless function ready with database ${isDbConnected ? 'connected' : 'disconnected'}`);
-      // Start newsletter scheduler in serverless environment only if DB is connected
-      if (isDbConnected) {
-        NewsletterScheduler.start();
-      }
+      // Vercel serverless - NO internal schedulers, only HTTP endpoints
+      console.log(`🚀 Vercel serverless ready - newsletter via HTTP endpoint only`);
+      // DO NOT start NewsletterScheduler on Vercel - it will be triggered by Vercel Cron URL
     }
   })
   .catch((error) => {
