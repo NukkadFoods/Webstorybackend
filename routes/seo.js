@@ -141,33 +141,6 @@ router.get('/article/:slug(*)', async (req, res) => {
 function generatePrerenderedHTML(meta) {
   const baseUrl = 'https://forexyy.com';
 
-  // Build VideoObject JSON-LD if article has AI commentary
-  const videoSchemaBlock = meta.hasAiCommentary && meta.articleId ? `
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "VideoObject",
-    "@id": "${meta.url}#video",
-    "name": "AI Commentary: ${escapeJson(meta.title)}",
-    "description": "Listen to our AI-powered deep dive into ${escapeJson(meta.title)}.",
-    "thumbnailUrl": [
-      "${meta.image}"
-    ],
-    "uploadDate": "${meta.publishedTime || new Date().toISOString()}",
-    "duration": "PT2M30S",
-    "contentUrl": "${baseUrl}/api/tts/audio/${meta.articleId}",
-    "embedUrl": "${meta.url}",
-    "encodingFormat": "audio/mpeg",
-    "publisher": {
-      "@type": "Organization",
-      "name": "Forexyy",
-      "logo": {
-        "@type": "ImageObject",
-        "url": "${baseUrl}/logo.png"
-      }
-    }
-  }
-  </script>` : '';
 
   return `<!DOCTYPE html>
 <html lang="en" prefix="og: http://ogp.me/ns#">
@@ -176,9 +149,6 @@ function generatePrerenderedHTML(meta) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(meta.title)} | Forexyy</title>
   <meta name="description" content="${escapeHtml(meta.description)}">
-
-  <!-- JSON-LD Schema: VideoObject (positioned high for Googlebot) -->
-  ${videoSchemaBlock}
 
   <!-- JSON-LD Schema: NewsArticle -->
   <script type="application/ld+json">
@@ -203,8 +173,7 @@ function generatePrerenderedHTML(meta) {
     "speakable": {
       "@type": "SpeakableSpecification",
       "cssSelector": [".article-title", ".article-summary", ".ai-commentary"]
-    }${meta.hasAiCommentary && meta.articleId ? `,
-    "video": { "@id": "${meta.url}#video" }` : ''}
+    }
   }
   </script>
 
@@ -602,40 +571,7 @@ router.get('/api/schema/:articleId', async (req, res) => {
       newsArticleSchema.articleBody = article.aiCommentary.substring(0, 5000);
     }
 
-    // Build VideoObject for AI commentary
-    const videoSchema = article.aiCommentary ? {
-      "@context": "https://schema.org",
-      "@type": "VideoObject",
-      "@id": `${articleUrl}#video`,
-      "name": `AI Commentary: ${article.title}`,
-      "description": `Listen to our AI-powered deep dive into ${article.title}.`,
-      "thumbnailUrl": [article.imageUrl || `${baseUrl}/og-image.png`],
-      "uploadDate": publishDate,
-      "duration": "PT2M30S",
-      "contentUrl": `${baseUrl}/api/tts/audio/${article._id || article.id}`,
-      "embedUrl": articleUrl,
-      "encodingFormat": "audio/mpeg",
-      "publisher": {
-        "@type": "Organization",
-        "name": "Forexyy",
-        "logo": {
-          "@type": "ImageObject",
-          "url": `${baseUrl}/logo.png`
-        }
-      }
-    } : null;
-
-    // Link VideoObject from NewsArticle via @id
-    if (videoSchema) {
-      newsArticleSchema.video = { "@id": `${articleUrl}#video` };
-    }
-
-    // Return both schemas as an array (Google supports @graph or array)
-    const response = videoSchema
-      ? [newsArticleSchema, videoSchema]
-      : newsArticleSchema;
-
-    res.json(response);
+    res.json(newsArticleSchema);
   } catch (error) {
     console.error('Error generating schema:', error);
     res.status(500).json({ error: 'Error generating schema' });
@@ -649,58 +585,90 @@ router.get('/api/schema/:articleId', async (req, res) => {
 router.get('/video-sitemap.xml', async (req, res) => {
   try {
     const baseUrl = 'https://forexyy.com';
+    const axios = require('axios');
+    const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || 'AIzaSyBO1mrYoksmwSJFgOFtSc16b00yWi8cIwk';
+    const CHANNEL_ID = process.env.YOUTUBE_CHANNEL_ID || 'UCBkp7FF7Gpy9eA26cgvHPAw';
 
     let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">
 `;
 
-    if (Article) {
-      // Get recent articles that have AI commentary (these are the "videos")
-      const articlesWithCommentary = await Article.find({
-        aiCommentary: { $exists: true, $ne: null, $ne: '' }
-      })
-        .sort({ publishedDate: -1, createdAt: -1 })
-        .limit(500)
-        .select('title url abstract aiCommentary imageUrl publishedDate createdAt _id section keywords');
+    try {
+      // Step 1: Search for videos from the YouTube channel
+      const searchResponse = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+        params: {
+          key: YOUTUBE_API_KEY,
+          channelId: CHANNEL_ID,
+          part: 'snippet',
+          order: 'date',
+          maxResults: 50,
+          type: 'video'
+        }
+      });
 
-      articlesWithCommentary.forEach(article => {
-        const slug = article.url
-          ? article.url.split('/').pop().replace(/\.html?$/, '')
-          : article.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const searchResults = searchResponse.data.items || [];
 
-        const articleUrl = `${baseUrl}/article/${encodeURIComponent(slug)}`;
-        const publishDate = (article.publishedDate || article.createdAt);
-        const isoDate = publishDate ? publishDate.toISOString() : new Date().toISOString();
-        const description = (article.abstract || article.aiCommentary?.substring(0, 200) || article.title)
-          .replace(/[<>&'"]/g, ' ').substring(0, 2048);
-        const thumbnailUrl = article.imageUrl || `${baseUrl}/og-image.png`;
-        const keywords = article.keywords?.slice(0, 10).join(', ') || article.section || 'news';
+      if (searchResults.length > 0) {
+        // Step 2: Get detailed video info (duration, stats)
+        const videoIds = searchResults.map(item => item.id.videoId).join(',');
+        const videosResponse = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
+          params: {
+            key: YOUTUBE_API_KEY,
+            id: videoIds,
+            part: 'snippet,contentDetails,statistics'
+          }
+        });
 
-        xml += `  <url>
-    <loc>${articleUrl}</loc>
+        const videos = videosResponse.data.items || [];
+
+        videos.forEach(video => {
+          const videoId = video.id;
+          const title = video.snippet.title.replace(/[<>&'"]/g, ' ');
+          const description = (video.snippet.description || title)
+            .replace(/[<>&'"]/g, ' ').substring(0, 2048);
+          const thumbnailUrl = video.snippet.thumbnails.maxres?.url
+            || video.snippet.thumbnails.high?.url
+            || video.snippet.thumbnails.medium?.url
+            || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+          const publishDate = video.snippet.publishedAt;
+
+          // Parse ISO 8601 duration to seconds (e.g., "PT1M30S" -> 90)
+          const durationMatch = video.contentDetails.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+          const durationSeconds = durationMatch
+            ? (parseInt(durationMatch[1] || 0) * 3600) + (parseInt(durationMatch[2] || 0) * 60) + parseInt(durationMatch[3] || 0)
+            : 60;
+
+          const tags = video.snippet.tags?.slice(0, 10).join(', ') || 'news, forexyy';
+
+          xml += `  <url>
+    <loc>${baseUrl}/reels</loc>
     <video:video>
       <video:thumbnail_loc>${thumbnailUrl}</video:thumbnail_loc>
-      <video:title><![CDATA[AI Commentary: ${article.title}]]></video:title>
+      <video:title><![CDATA[${video.snippet.title}]]></video:title>
       <video:description><![CDATA[${description}]]></video:description>
-      <video:content_loc>${baseUrl}/api/tts/audio/${article._id}</video:content_loc>
-      <video:player_loc>${articleUrl}</video:player_loc>
-      <video:duration>150</video:duration>
-      <video:publication_date>${isoDate}</video:publication_date>
+      <video:player_loc>https://www.youtube.com/embed/${videoId}</video:player_loc>
+      <video:duration>${durationSeconds}</video:duration>
+      <video:view_count>${video.statistics.viewCount || 0}</video:view_count>
+      <video:publication_date>${publishDate}</video:publication_date>
       <video:family_friendly>yes</video:family_friendly>
       <video:live>no</video:live>
-      <video:tag>${keywords}</video:tag>
+      <video:tag>${tags}</video:tag>
     </video:video>
   </url>
 `;
-      });
+        });
+      }
+    } catch (ytError) {
+      console.error('Video sitemap YouTube API error:', ytError.message);
+      // Sitemap will still be valid XML, just empty
     }
 
     xml += '</urlset>';
 
     res.set({
       'Content-Type': 'application/xml',
-      'Cache-Control': 'public, max-age=1800' // Cache for 30 minutes
+      'Cache-Control': 'public, max-age=3600' // Cache for 1 hour (YouTube data changes less often)
     });
 
     res.send(xml);
