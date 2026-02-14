@@ -170,6 +170,224 @@ app.use('/api/tts', ttsRoutes);
 app.use('/api/youtube', youtubeRoutes);
 app.use('/', seoRoutes); // SEO routes for sitemap.xml and robots.txt
 
+// ========================================
+// NEWSLETTER UNSUBSCRIBE PAGE (No JavaScript required)
+// These routes serve HTML pages directly for email link compatibility
+// ========================================
+
+// HTML template for unsubscribe page
+const generateUnsubscribeHTML = (status, message, email = '', token = '') => {
+  const isSuccess = status === 'success';
+  const isError = status === 'error';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${isSuccess ? 'Unsubscribed' : isError ? 'Error' : 'Unsubscribe'} - Forexyy Newsletter</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 50%, #2563eb 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            max-width: 480px;
+            width: 100%;
+            padding: 48px 32px;
+            text-align: center;
+        }
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+            font-size: 28px;
+            font-weight: bold;
+            color: white;
+        }
+        .icon { font-size: 48px; margin-bottom: 16px; }
+        h1 { color: #111827; font-size: 24px; margin-bottom: 12px; }
+        p { color: #6b7280; font-size: 16px; line-height: 1.6; margin-bottom: 24px; }
+        .email {
+            background: #f3f4f6;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-family: monospace;
+            color: #374151;
+            display: inline-block;
+            margin-bottom: 24px;
+        }
+        .btn {
+            display: inline-block;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: #dc2626; color: white; }
+        .btn-primary:hover { background: #b91c1c; }
+        .btn-secondary { background: #f3f4f6; color: #374151; margin-left: 12px; }
+        .btn-secondary:hover { background: #e5e7eb; }
+        .btn-home { background: #2563eb; color: white; }
+        .btn-home:hover { background: #1d4ed8; }
+        .success-icon { color: #10b981; }
+        .error-icon { color: #ef4444; }
+        .footer {
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #e5e7eb;
+            color: #9ca3af;
+            font-size: 14px;
+        }
+        form { display: inline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">F</div>
+        ${isSuccess ? `
+            <div class="icon success-icon">&#10003;</div>
+            <h1>Successfully Unsubscribed</h1>
+            <p>${message}</p>
+            <a href="https://forexyy.com" class="btn btn-home">Return to Forexyy</a>
+        ` : isError ? `
+            <div class="icon error-icon">&#10007;</div>
+            <h1>Something Went Wrong</h1>
+            <p>${message}</p>
+            <a href="https://forexyy.com" class="btn btn-home">Return to Forexyy</a>
+        ` : `
+            <h1>Unsubscribe from Newsletter</h1>
+            <p>Are you sure you want to unsubscribe from the Forexyy Newsletter?</p>
+            ${email ? `<div class="email">${email}</div>` : ''}
+            <form method="POST" action="/unsubscribe">
+                <input type="hidden" name="token" value="${token}">
+                <button type="submit" class="btn btn-primary">Yes, Unsubscribe</button>
+            </form>
+            <a href="https://forexyy.com" class="btn btn-secondary">Cancel</a>
+        `}
+        <div class="footer">
+            <p>Forexyy Newsletter &bull; AI-Powered News Analysis</p>
+        </div>
+    </div>
+</body>
+</html>`;
+};
+
+// GET /unsubscribe - Show unsubscribe confirmation page (works without JavaScript)
+app.get('/unsubscribe', async (req, res) => {
+  try {
+    const { token } = req.query;
+
+    if (!token) {
+      return res.status(400).send(generateUnsubscribeHTML(
+        'error',
+        'Invalid unsubscribe link. Please use the link from your newsletter email.'
+      ));
+    }
+
+    // Find subscriber by token to show their email
+    const Subscriber = require('./models/Subscriber');
+    const subscriber = await Subscriber.findOne({ unsubscribeToken: token });
+
+    if (!subscriber) {
+      return res.status(404).send(generateUnsubscribeHTML(
+        'error',
+        'This unsubscribe link is invalid or has already been used. You may have already unsubscribed.'
+      ));
+    }
+
+    // Show confirmation page with subscriber's email
+    res.send(generateUnsubscribeHTML('confirm', '', subscriber.email, token));
+
+  } catch (error) {
+    console.error('Unsubscribe page error:', error);
+    res.status(500).send(generateUnsubscribeHTML(
+      'error',
+      'An error occurred. Please try again or contact support.'
+    ));
+  }
+});
+
+// POST /unsubscribe - Process unsubscribe request (form submission, no JavaScript needed)
+app.post('/unsubscribe', express.urlencoded({ extended: true }), async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token) {
+      return res.status(400).send(generateUnsubscribeHTML(
+        'error',
+        'Invalid unsubscribe request. Please use the link from your newsletter email.'
+      ));
+    }
+
+    const Subscriber = require('./models/Subscriber');
+    const AllUsers = require('./models/AllUsers');
+
+    // Find subscriber by token
+    const subscriber = await Subscriber.findOne({ unsubscribeToken: token });
+
+    if (!subscriber) {
+      return res.status(404).send(generateUnsubscribeHTML(
+        'error',
+        'This unsubscribe link is invalid or has already been used.'
+      ));
+    }
+
+    const email = subscriber.email;
+
+    // Update AllUsers collection (keep permanent record)
+    await AllUsers.findOneAndUpdate(
+      { email: email },
+      {
+        isCurrentlySubscribed: false,
+        lastUnsubscribeAt: new Date(),
+        $push: {
+          subscriptionHistory: {
+            action: 'unsubscribe',
+            timestamp: new Date()
+          }
+        }
+      }
+    );
+
+    // Remove from active Subscribers collection
+    await Subscriber.findByIdAndDelete(subscriber._id);
+
+    console.log(`Unsubscribed via web page: ${email}`);
+
+    // Show success page
+    res.send(generateUnsubscribeHTML(
+      'success',
+      `You have been successfully unsubscribed from the Forexyy Newsletter. We're sorry to see you go!`
+    ));
+
+  } catch (error) {
+    console.error('Unsubscribe processing error:', error);
+    res.status(500).send(generateUnsubscribeHTML(
+      'error',
+      'An error occurred while processing your request. Please try again or contact support.'
+    ));
+  }
+});
+
 // Vercel Cron endpoint for newsletter (GET - for Vercel cron)
 // This endpoint runs ONLY on Vercel (newsletter), disabled on Render
 app.get('/api/cron/newsletter', async (req, res) => {

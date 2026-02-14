@@ -29,6 +29,113 @@ function isBot(userAgent) {
 }
 
 /**
+ * Newsletter-friendly article page at /read/:slug
+ * Serves full HTML content that works WITHOUT JavaScript
+ * Perfect for email clients, users with JS disabled, etc.
+ * Redirects to React app if JavaScript is available
+ */
+router.get('/read/:slug(*)', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const baseUrl = 'https://forexyy.com';
+
+    console.log(`[SEO] Newsletter article page: ${slug}`);
+
+    if (!Article) {
+      console.log('[SEO] Article model not available');
+      return res.send(generateNewsletterHTML({
+        title: 'Forexyy News',
+        description: 'AI-powered news analysis with audio commentary.',
+        image: `${baseUrl}/og-image.png`,
+        url: `${baseUrl}/article/${slug}`,
+        slug: slug
+      }));
+    }
+
+    // Decode the URL-encoded slug
+    const decodedSlug = decodeURIComponent(slug);
+
+    // Try multiple matching strategies (same as /article/:slug)
+    let article = null;
+
+    // 1. Try MongoDB ID match first
+    if (decodedSlug.match(/^[a-f0-9]{24}$/i)) {
+      article = await Article.findById(decodedSlug);
+    }
+
+    // 2. Try exact URL match
+    if (!article && decodedSlug.includes('http')) {
+      article = await Article.findOne({ url: decodedSlug });
+    }
+
+    // 3. Try partial URL match
+    if (!article) {
+      const urlPart = decodedSlug.split('/').pop()?.replace(/\.html?$/, '');
+      if (urlPart && urlPart.length > 10) {
+        article = await Article.findOne({
+          url: { $regex: urlPart, $options: 'i' }
+        });
+      }
+    }
+
+    // 4. Try title-based slug match
+    if (!article) {
+      const titleSearch = decodedSlug
+        .replace(/https?:\/\/[^/]+\/?/g, '')
+        .replace(/[-_]/g, ' ')
+        .replace(/\.(html?|php|aspx?)$/i, '')
+        .trim();
+
+      if (titleSearch.length > 5) {
+        article = await Article.findOne({
+          title: { $regex: titleSearch.substring(0, 50), $options: 'i' }
+        });
+      }
+    }
+
+    if (!article) {
+      return res.send(generateNewsletterHTML({
+        title: 'Article Not Found | Forexyy',
+        description: 'The requested article could not be found.',
+        image: `${baseUrl}/og-image.png`,
+        url: `${baseUrl}/article/${slug}`,
+        slug: slug
+      }));
+    }
+
+    const articleUrl = `${baseUrl}/article/${encodeURIComponent(slug)}`;
+    const publishDate = article.publishedDate || article.createdAt;
+
+    // Generate newsletter-friendly HTML
+    const html = generateNewsletterHTML({
+      title: article.title,
+      description: article.abstract || article.aiCommentary?.substring(0, 200) || article.title,
+      image: article.imageUrl || `${baseUrl}/og-image.png`,
+      url: articleUrl,
+      type: 'article',
+      section: article.section,
+      publishedTime: publishDate?.toISOString(),
+      author: article.byline || 'Forexyy News',
+      keywords: article.keywords?.join(', ') || article.section,
+      articleBody: article.aiCommentary || article.abstract,
+      articleId: article._id?.toString() || article.id,
+      slug: slug,
+      hasAiCommentary: !!article.aiCommentary
+    });
+
+    res.send(html);
+  } catch (error) {
+    console.error('Newsletter article page error:', error);
+    res.status(500).send(`
+      <html><body style="font-family: sans-serif; padding: 40px; text-align: center;">
+        <h1>Something went wrong</h1>
+        <p>Please try visiting <a href="https://forexyy.com">forexyy.com</a> directly.</p>
+      </body></html>
+    `);
+  }
+});
+
+/**
  * Pre-render article page for social crawlers
  * Called by Vercel when bot user-agent is detected
  * Always returns full HTML with OG tags (no bot check - Vercel handles that)
@@ -136,11 +243,211 @@ router.get('/article/:slug(*)', async (req, res) => {
 });
 
 /**
- * Generate pre-rendered HTML with OG tags for social crawlers
+ * Generate newsletter-friendly HTML that auto-redirects to React app
+ * Used by /read/:slug route for newsletter links
+ */
+function generateNewsletterHTML(meta) {
+  const baseUrl = 'https://forexyy.com';
+  const reactAppUrl = meta.url || `${baseUrl}/article/${meta.slug}`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(meta.title)} | Forexyy</title>
+  <meta name="description" content="${escapeHtml(meta.description)}">
+
+  <!-- Open Graph / Social -->
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="${reactAppUrl}">
+  <meta property="og:title" content="${escapeHtml(meta.title)}">
+  <meta property="og:description" content="${escapeHtml(meta.description)}">
+  <meta property="og:image" content="${meta.image}">
+  <meta property="og:site_name" content="Forexyy">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="${escapeHtml(meta.title)}">
+  <meta name="twitter:image" content="${meta.image}">
+
+  <!-- Auto-redirect to React app if JavaScript works -->
+  <script>
+    window.location.replace("${reactAppUrl}");
+  </script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      background: #f9fafb;
+      color: #1f2937;
+      line-height: 1.6;
+    }
+    .header {
+      background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+      padding: 16px 20px;
+    }
+    .header-inner {
+      max-width: 800px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: white;
+    }
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      color: #2563eb;
+      font-size: 18px;
+    }
+    .logo-text { font-size: 22px; font-weight: 700; }
+    .container { max-width: 800px; margin: 0 auto; padding: 24px 20px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+    .category {
+      background: #dbeafe;
+      color: #1e40af;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .date { color: #6b7280; font-size: 14px; }
+    .article-title {
+      font-size: 28px;
+      font-weight: 700;
+      color: #111827;
+      line-height: 1.3;
+      margin-bottom: 16px;
+      font-family: Georgia, serif;
+    }
+    .article-image {
+      width: 100%;
+      max-height: 400px;
+      object-fit: cover;
+      border-radius: 12px;
+      margin-bottom: 20px;
+    }
+    .article-summary {
+      font-size: 18px;
+      color: #4b5563;
+      margin-bottom: 24px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .ai-section {
+      background: white;
+      border: 2px solid #2563eb;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .ai-header {
+      background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+      color: white;
+      padding: 12px 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .ai-content {
+      padding: 20px;
+      font-size: 15px;
+      color: #374151;
+      white-space: pre-line;
+      line-height: 1.7;
+    }
+    .cta-btn {
+      display: inline-block;
+      background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+      color: white;
+      padding: 16px 32px;
+      border-radius: 8px;
+      font-weight: 600;
+      text-decoration: none;
+      font-size: 16px;
+      margin: 24px 0;
+    }
+    .footer {
+      background: #1f2937;
+      color: #9ca3af;
+      padding: 20px;
+      text-align: center;
+      font-size: 14px;
+      margin-top: 40px;
+    }
+    .footer a { color: #60a5fa; text-decoration: none; }
+    @media (max-width: 640px) {
+      .article-title { font-size: 22px; }
+      .article-summary { font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <a href="${baseUrl}" class="logo">
+        <div class="logo-icon">F</div>
+        <span class="logo-text">Forexyy</span>
+      </a>
+    </div>
+  </header>
+
+  <main class="container">
+    <article>
+      <div class="meta">
+        ${meta.section ? `<span class="category">${escapeHtml(meta.section)}</span>` : ''}
+        ${meta.publishedTime ? `<span class="date">${new Date(meta.publishedTime).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>` : ''}
+      </div>
+
+      <h1 class="article-title">${escapeHtml(meta.title)}</h1>
+
+      ${meta.image ? `<img src="${meta.image}" alt="${escapeHtml(meta.title)}" class="article-image">` : ''}
+
+      <p class="article-summary">${escapeHtml(meta.description)}</p>
+
+      ${meta.articleBody ? `
+      <div class="ai-section">
+        <div class="ai-header">
+          <span>&#9889;</span> Forexyy AI Analysis
+        </div>
+        <div class="ai-content">${escapeHtml(meta.articleBody)}</div>
+      </div>
+      ` : ''}
+
+      <center>
+        <a href="${reactAppUrl}" class="cta-btn">&#127911; Open Full Article with Audio</a>
+      </center>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <p>Forexyy &bull; AI-Powered News Analysis</p>
+    <p style="margin-top: 8px;"><a href="${baseUrl}">Visit Forexyy.com</a></p>
+  </footer>
+</body>
+</html>`;
+}
+
+/**
+ * Generate pre-rendered HTML with full article content
+ * Works without JavaScript - perfect for email clients and users with JS disabled
  */
 function generatePrerenderedHTML(meta) {
   const baseUrl = 'https://forexyy.com';
-
+  const frontendUrl = meta.url || `${baseUrl}/article/${meta.slug}`;
 
   return `<!DOCTYPE html>
 <html lang="en" prefix="og: http://ogp.me/ns#">
@@ -202,15 +509,241 @@ function generatePrerenderedHTML(meta) {
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="${meta.url}">
   ${meta.keywords ? `<meta name="keywords" content="${escapeHtml(meta.keywords)}">` : ''}
+
+  <!-- No auto-redirect - let users choose to open the React app -->
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #f9fafb;
+      color: #1f2937;
+      line-height: 1.6;
+    }
+    .header {
+      background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+      padding: 16px 20px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: white;
+    }
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      color: #2563eb;
+      font-size: 18px;
+    }
+    .logo-text {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 24px 20px;
+    }
+    .breadcrumb {
+      font-size: 14px;
+      color: #6b7280;
+      margin-bottom: 16px;
+    }
+    .breadcrumb a {
+      color: #2563eb;
+      text-decoration: none;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .category {
+      background: #dbeafe;
+      color: #1e40af;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .date {
+      color: #6b7280;
+      font-size: 14px;
+    }
+    .article-title {
+      font-size: 32px;
+      font-weight: 700;
+      color: #111827;
+      line-height: 1.2;
+      margin-bottom: 16px;
+      font-family: Georgia, 'Times New Roman', serif;
+    }
+    .article-image {
+      width: 100%;
+      max-height: 450px;
+      object-fit: cover;
+      border-radius: 12px;
+      margin-bottom: 24px;
+    }
+    .article-summary {
+      font-size: 18px;
+      color: #4b5563;
+      margin-bottom: 24px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .ai-section {
+      background: white;
+      border: 2px solid #2563eb;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+    .ai-header {
+      background: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+      color: white;
+      padding: 12px 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .ai-content {
+      padding: 20px;
+      font-size: 16px;
+      color: #374151;
+      white-space: pre-line;
+    }
+    .cta-section {
+      background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+      border-radius: 12px;
+      padding: 32px;
+      text-align: center;
+      color: white;
+      margin: 32px 0;
+    }
+    .cta-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .cta-text {
+      font-size: 16px;
+      opacity: 0.9;
+      margin-bottom: 20px;
+    }
+    .cta-btn {
+      display: inline-block;
+      background: white;
+      color: #1e3a8a;
+      padding: 14px 32px;
+      border-radius: 8px;
+      font-weight: 600;
+      text-decoration: none;
+      font-size: 16px;
+    }
+    .cta-btn:hover {
+      background: #f3f4f6;
+    }
+    .footer {
+      background: #1f2937;
+      color: #9ca3af;
+      padding: 24px 20px;
+      text-align: center;
+      font-size: 14px;
+    }
+    .footer a {
+      color: #60a5fa;
+      text-decoration: none;
+    }
+    @media (max-width: 640px) {
+      .article-title {
+        font-size: 24px;
+      }
+      .article-summary {
+        font-size: 16px;
+      }
+      .cta-section {
+        padding: 24px 16px;
+      }
+    }
+  </style>
 </head>
 <body>
-  <article>
-    <h1 class="article-title">${escapeHtml(meta.title)}</h1>
-    <p class="article-summary">${escapeHtml(meta.description)}</p>
-    ${meta.articleBody ? `<div class="ai-commentary">${escapeHtml(meta.articleBody)}</div>` : ''}
-    ${meta.image ? `<img src="${meta.image}" alt="${escapeHtml(meta.title)}">` : ''}
-  </article>
-  <p>For the full experience with AI audio commentary, please enable JavaScript or visit <a href="${baseUrl}">forexyy.com</a></p>
+  <noscript>
+    <!-- Full article content for users/email clients without JavaScript -->
+  </noscript>
+
+  <header class="header">
+    <div class="header-inner">
+      <a href="${baseUrl}" class="logo">
+        <div class="logo-icon">F</div>
+        <span class="logo-text">Forexyy</span>
+      </a>
+    </div>
+  </header>
+
+  <main class="container">
+    <nav class="breadcrumb">
+      <a href="${baseUrl}">Home</a> &gt;
+      ${meta.section ? `<a href="${baseUrl}/category/${meta.section.toLowerCase()}">${meta.section}</a> &gt;` : ''}
+      Article
+    </nav>
+
+    <article>
+      <div class="meta">
+        ${meta.section ? `<span class="category">${escapeHtml(meta.section)}</span>` : ''}
+        ${meta.publishedTime ? `<span class="date">${new Date(meta.publishedTime).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>` : ''}
+      </div>
+
+      <h1 class="article-title">${escapeHtml(meta.title)}</h1>
+
+      ${meta.image ? `<img src="${meta.image}" alt="${escapeHtml(meta.title)}" class="article-image">` : ''}
+
+      <p class="article-summary">${escapeHtml(meta.description)}</p>
+
+      ${meta.articleBody ? `
+      <div class="ai-section">
+        <div class="ai-header">
+          <span>&#9889;</span> Forexyy AI Analysis
+        </div>
+        <div class="ai-content ai-commentary">${escapeHtml(meta.articleBody)}</div>
+      </div>
+      ` : ''}
+
+      <div class="cta-section">
+        <h2 class="cta-title">&#127911; Listen to This Article</h2>
+        <p class="cta-text">Experience the full interactive version with AI audio commentary, related articles, and more.</p>
+        <a href="${frontendUrl}" class="cta-btn">Open Full Article &#8594;</a>
+      </div>
+    </article>
+  </main>
+
+  <footer class="footer">
+    <p>Forexyy Newsletter &bull; AI-Powered News Analysis</p>
+    <p style="margin-top: 8px;"><a href="${baseUrl}">Visit Forexyy.com</a></p>
+  </footer>
 </body>
 </html>`;
 }
