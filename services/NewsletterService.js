@@ -206,7 +206,7 @@ class NewsletterService {
                             </div>
                             ` : ''}
                             <div style="margin: 16px 0;">
-                                <a href="https://www.forexyy.com/read/${encodeURIComponent(featuredArticle.id)}" class="btn-primary" style="margin-right: 12px;">
+                                <a href="https://www.forexyy.com/article/${encodeURIComponent(featuredArticle.id)}" class="btn-primary" style="margin-right: 12px;">
                                     Read Full Analysis on Forexyy.com →
                                 </a>
                             </div>
@@ -224,7 +224,7 @@ class NewsletterService {
                             <h4 style="margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #111827;">${article.title}</h4>
                             <p style="color: #6b7280; margin: 8px 0; font-size: 14px; line-height: 1.5;">${(article.summary || article.abstract || '').substring(0, 120)}...</p>
                             <div style="margin: 12px 0;">
-                                <a href="https://www.forexyy.com/read/${encodeURIComponent(article.id)}" style="color: #2563eb; text-decoration: none; font-weight: 500; font-size: 14px;">
+                                <a href="https://www.forexyy.com/article/${encodeURIComponent(article.id)}" style="color: #2563eb; text-decoration: none; font-weight: 500; font-size: 14px;">
                                     Read Analysis →
                                 </a>
                             </div>

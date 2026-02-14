@@ -138,14 +138,39 @@ router.get('/read/:slug(*)', async (req, res) => {
 /**
  * Pre-render article page for social crawlers
  * Called by Vercel when bot user-agent is detected
- * Always returns full HTML with OG tags (no bot check - Vercel handles that)
+ * If a non-bot reaches this route, redirect them to the React app
  */
 router.get('/article/:slug(*)', async (req, res) => {
   try {
     const { slug } = req.params;
     const baseUrl = 'https://forexyy.com';
+    const userAgent = (req.headers['user-agent'] || '').toLowerCase();
 
-    console.log(`[SEO] Pre-rendering article: ${slug}`);
+    // Check if this is actually a bot - if not, redirect to React app
+    const botPatterns = ['googlebot', 'bingbot', 'yandexbot', 'baiduspider', 'duckduckbot', 'slurp',
+      'facebookexternalhit', 'twitterbot', 'linkedinbot', 'telegrambot', 'slackbot', 'discordbot',
+      'pinterestbot', 'redditbot', 'gptbot', 'perplexitybot', 'claudebot', 'applebot', 'embedly',
+      'quora link preview', 'flipboard', 'whatsapp', 'crawler', 'spider'];
+
+    const isBot = botPatterns.some(pattern => userAgent.includes(pattern));
+
+    if (!isBot) {
+      // Not a bot - serve a simple page that redirects via JavaScript
+      // This avoids redirect loops since JavaScript redirect won't trigger Vercel rewrite
+      const reactAppUrl = `${baseUrl}/article/${encodeURIComponent(slug)}`;
+      console.log(`[SEO] Non-bot detected, serving JS redirect: ${userAgent.substring(0, 50)}`);
+      return res.send(`<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="0;url=${reactAppUrl}">
+<script>window.location.replace("${reactAppUrl}");</script>
+<title>Redirecting...</title>
+</head><body>
+<p>Redirecting to <a href="${reactAppUrl}">article</a>...</p>
+</body></html>`);
+    }
+
+    console.log(`[SEO] Bot detected, pre-rendering article: ${slug}`);
 
     if (!Article) {
       console.log('[SEO] Article model not available');
