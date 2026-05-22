@@ -40,22 +40,37 @@ const fetchFromNYT = async (endpoint) => {
 const normalizeArticleFormat = (article) => {
   const articleObj = article.toObject ? article.toObject() : { ...article };
 
-  // FIXED: Use MongoDB _id as primary identifier for clean URLs
-  // This prevents ugly URLs like /article/https%3A%2F%2Fwww.nytimes.com%2F...
-  if (articleObj._id) {
-    articleObj.id = articleObj._id.toString();
+  // Ensure id field exists - use URL as the primary ID for consistent frontend routing
+  // URLs are unique and work better than NYT URIs or MongoDB _ids for browser navigation
+  if (articleObj.url) {
+    articleObj.id = articleObj.url;
   } else if (articleObj.uri) {
-    // Use last part of URI if available
-    const uriParts = articleObj.uri.split('/');
-    articleObj.id = uriParts[uriParts.length - 1] || articleObj.uri;
+    articleObj.id = articleObj.uri;
+  } else if (articleObj._id) {
+    articleObj.id = articleObj._id.toString();
   }
-  // Note: We deliberately DON'T use articleObj.url as id anymore to avoid URL-encoded slugs
 
   // CRITICAL: Ensure imageUrl field exists (for home category compatibility)
   if (!articleObj.imageUrl && articleObj.multimedia && articleObj.multimedia.length > 0) {
-    const media = articleObj.multimedia[0];
-    if (media.url) {
-      articleObj.imageUrl = media.url;
+    // Find optimized format for feeds: standard/Normal/medium/threeByTwoSmallAt2X
+    const preferredFormats = ['threeByTwoSmallAt2X', 'Normal', 'mediumThreeByTwo210', 'LargeThumbnail'];
+    let selectedMedia = null;
+    
+    for (const format of preferredFormats) {
+      const found = articleObj.multimedia.find(m => m.format === format);
+      if (found && found.url) {
+        selectedMedia = found;
+        break;
+      }
+    }
+    
+    // Fallback to first available if none of the preferred are found
+    if (!selectedMedia) {
+      selectedMedia = articleObj.multimedia[0];
+    }
+    
+    if (selectedMedia && selectedMedia.url) {
+      articleObj.imageUrl = selectedMedia.url;
     }
   }
 
