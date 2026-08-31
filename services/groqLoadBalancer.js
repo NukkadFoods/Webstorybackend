@@ -62,45 +62,42 @@ class GroqLoadBalancer {
   }
 
   /**
-   * Generate chat completion with automatic failover
+   * Generate chat completion with automatic failover across all configured keys
    */
   async createChatCompletion(params) {
-    const client = this.getClient();
+    let lastError = null;
+    const maxAttempts = this.clients.length;
 
-    try {
-      // console.log(`🔑 Using Groq API Key ${client.id} (${client.tokensUsed}/${client.dailyLimit} tokens used)`);
-
-      const response = await client.client.chat.completions.create(params);
-
-      // Track token usage
-      const tokensUsed = response.usage?.total_tokens || 600; // Estimate if not provided
-      client.tokensUsed += tokensUsed;
-
-      // console.log(`✅ Key ${client.id} used ${tokensUsed} tokens (Total: ${client.tokensUsed}/${client.dailyLimit})`);
-
-      return response;
-
-    } catch (error) {
-      // Handle rate limit errors
-      if (error.status === 429 || error.message?.includes('rate_limit')) {
-        console.error(`❌ Key ${client.id} hit rate limit:`, error.message);
-        client.isAvailable = false;
-        client.lastError = 'Rate limit exceeded';
-
-        // Try with next available key
-        // console.log('🔄 Retrying with different API key...');
-        const nextClient = this.getClient();
-
-        if (nextClient.id !== client.id) {
-          return await nextClient.client.chat.completions.create(params);
-        }
-
-        // All keys exhausted
-        throw new Error('RATE_LIMIT_ALL_KEYS: All API keys have hit their rate limits');
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const client = this.getClient();
+      if (!client || !client.isAvailable) {
+        continue;
       }
 
-      throw error;
+      try {
+        const response = await client.client.chat.completions.create(params);
+
+        // Track token usage
+        const tokensUsed = response.usage?.total_tokens || 600;
+        client.tokensUsed += tokensUsed;
+
+        return response;
+
+      } catch (error) {
+        console.error(`❌ Key ${client.id} failed (${error.status || error.message}):`, error.message);
+        client.isAvailable = false;
+        client.lastError = error.message;
+        lastError = error;
+
+        const availableKeys = this.clients.filter(c => c.isAvailable).length;
+        if (availableKeys === 0) {
+          console.warn('⚠️ All Groq API keys have been exhausted or failed');
+          break;
+        }
+      }
     }
+
+    throw lastError || new Error('All Groq API keys failed or unavailable');
   }
 
   /**
