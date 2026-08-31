@@ -154,6 +154,7 @@ const debugRoutes = require('./routes/debug');
 const databaseRoutes = require('./routes/database');
 const newsletterRoutes = require('./routes/newsletter');
 const commentaryRoutes = require('./routes/commentary');
+const pushRoutes = require('./routes/push');
 const seoRoutes = require('./routes/seo');
 const youtubeRoutes = require('./routes/youtube');
 const sectionsRoutes = require('./routes/sections');
@@ -166,6 +167,7 @@ app.use('/api/sections', sectionsRoutes);
 app.use('/api/debug', debugRoutes);
 app.use('/api/database', databaseRoutes);
 app.use('/api/newsletter', newsletterRoutes);
+app.use('/api/push', pushRoutes);
 app.use('/api/tts', ttsRoutes);
 app.use('/api/youtube', youtubeRoutes);
 app.use('/', seoRoutes); // SEO routes for sitemap.xml and robots.txt
