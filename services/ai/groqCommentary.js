@@ -66,7 +66,7 @@ Perspective:`
             content: prompt
           }
         ],
-        model: 'llama3-8b-8192', // Fast and cost-effective
+        model: 'llama-3.1-8b-instant', // Universal fast & intelligent model
         max_tokens: 200,
         temperature: 0.7,
         top_p: 0.9
@@ -85,7 +85,7 @@ Perspective:`
         commentary,
         source: 'ai',
         generatedAt: new Date(),
-        model: 'llama3-8b-8192',
+        model: 'llama-3.1-8b-instant',
         topic
       };
 

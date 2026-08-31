@@ -63,9 +63,9 @@ Tone: Engaging, authoritative, slightly dramatic — perfect for a news commenta
 Keep it conversational and under 150 words.
 `;
 
-      // Use Groq API for script generation (you'll need to add this)
+      // Use Groq API for script generation
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: 'llama3-8b-8192',
+        model: 'llama-3.1-8b-instant',
         messages: [
           {
             role: 'system',

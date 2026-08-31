@@ -55,7 +55,7 @@ CRITICAL RULES:
         },
         { role: 'user', content: prompt }
       ],
-      model: 'llama-3.3-70b-versatile',
+      model: 'llama-3.1-8b-instant',
       temperature: 0.5, // Lower temperature for more consistent formatting
       max_tokens: 600, // Increased to ensure space for all 3 sections
     });
