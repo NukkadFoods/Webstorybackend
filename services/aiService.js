@@ -19,7 +19,8 @@ if (!groqLoadBalancer) {
  */
 const generateGroqCommentary = async (title, content, category = 'news') => {
   if (!groqLoadBalancer) {
-    throw new Error('Groq API not available - missing API keys');
+    console.warn('⚠️ Groq API not available - using fallback commentary');
+    return getFallbackCommentary({ title, content, category, section: category });
   }
 
   const prompt = `You are Forexyy News Analyst. Analyze this ${category} article and provide EXACTLY 3 sections of analysis.
@@ -63,31 +64,16 @@ CRITICAL RULES:
     const commentary = completion.choices[0]?.message?.content?.trim();
     
     if (!commentary) {
-      throw new Error('Empty response from Groq API');
+      console.warn('⚠️ Empty response from Groq - using fallback commentary');
+      return getFallbackCommentary({ title, content, category, section: category });
     }
 
     return commentary;
 
   } catch (error) {
     console.error('❌ Groq API Error:', error.message);
-    
-    // Check for rate limit errors on all keys
-    if (error.message.includes('RATE_LIMIT_ALL_KEYS')) {
-      throw new Error('RATE_LIMIT_ALL_KEYS: All API keys have exhausted their daily limits');
-    }
-    
-    // Check for rate limit errors
-    if (error.message.includes('429') || error.message.includes('rate limit')) {
-      throw new Error('RATE_LIMIT: Groq API rate limit exceeded');
-    }
-    
-    // Check for authentication errors
-    if (error.message.includes('401') || error.message.includes('authentication')) {
-      throw new Error('AUTH_ERROR: Invalid Groq API key');
-    }
-    
-    // Generic error
-    throw new Error(`GROQ_ERROR: ${error.message}`);
+    console.log('🔄 Using fallback 3-section commentary for article');
+    return getFallbackCommentary({ title, content, category, section: category });
   }
 };
 
