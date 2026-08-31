@@ -52,8 +52,9 @@ const normalizeArticleFormat = (article) => {
 
   // CRITICAL: Ensure imageUrl field exists (for home category compatibility)
   if (!articleObj.imageUrl && articleObj.multimedia && articleObj.multimedia.length > 0) {
-    // Find optimized format for feeds: standard/Normal/medium/threeByTwoSmallAt2X
-    const preferredFormats = ['threeByTwoSmallAt2X', 'Normal', 'mediumThreeByTwo210', 'LargeThumbnail'];
+    // Find HIGH-RESOLUTION format for Google Discover (requires 1200px+ images)
+    // superJumbo = 2048px, jumbo = 1024px, threeByTwoLargeAt2X = 1140px
+    const preferredFormats = ['superJumbo', 'jumbo', 'threeByTwoLargeAt2X', 'threeByTwoSmallAt2X', 'Normal'];
     let selectedMedia = null;
     
     for (const format of preferredFormats) {
