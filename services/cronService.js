@@ -18,8 +18,8 @@ class CronService {
       }
     });
 
-    // Pre-fetch popular categories every 30 minutes
-    const popularCategories = ['technology', 'business', 'politics', 'entertainment'];
+    // Pre-fetch popular and high-CPM categories every 30 minutes
+    const popularCategories = ['business', 'technology', 'finance', 'politics', 'health', 'world', 'entertainment'];
     cron.schedule('*/30 * * * *', async () => {
       console.log('🔄 Running category pre-fetch job');
       for (const category of popularCategories) {

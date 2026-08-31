@@ -10,18 +10,18 @@ const sectionArticleService = require('../services/db/sectionArticleService');
 
 class SectionRotationWorker {
   constructor() {
-    // 9 sections: 6 from NYT, 3 from newsdata.io
-    // Homepage will display 2 articles from each section
+    // 9 sections: High-CPM advertiser categories first for maximum ad revenue
     this.sections = [
-      'world',        // 1 - NYT
-      'us',           // 2 - NYT
-      'politics',     // 3 - NYT
-      'business',     // 4 - NYT
-      'technology',   // 5 - NYT
-      'health',       // 6 - NYT
-      'sports',       // 7 - newsdata.io (moved from NYT)
-      'entertainment',// 8 - newsdata.io
-      'finance'       // 9 - newsdata.io
+      'business',     // 1 - High CPM (NYT)
+      'technology',   // 2 - High CPM (NYT)
+      'finance',      // 3 - High CPM (newsdata.io)
+      'politics',     // 4 - High Engagement (NYT)
+      'health',       // 5 - High CPM (NYT)
+      'world',        // 6 - High Traffic (NYT)
+      'us',           // 7 - High Traffic (NYT)
+      'science',      // 8 - Medium CPM (NYT)
+      'entertainment',// 9 - newsdata.io
+      'sports'        // 10 - newsdata.io
     ];
     
     this.currentSectionIndex = 0;
