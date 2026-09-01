@@ -1,5 +1,6 @@
 const Article = require('../../models/article');
 const { connectToMongoDB, isConnected } = require('../../config/database');
+const googleIndexingService = require('../googleIndexingService');
 
 /**
  * Helper function to ensure articles have consistent ID fields
@@ -113,6 +114,15 @@ const saveArticles = async (articles) => {
       const savedArticle = await saveArticle(article);
       if (savedArticle) {
         savedArticles.push(savedArticle);
+      }
+    }
+    
+    // Automatically queue saved articles for dynamic Google Indexing
+    if (savedArticles.length > 0) {
+      try {
+        googleIndexingService.queueArticlesForIndexing(savedArticles);
+      } catch (indexErr) {
+        // Never let indexing errors fail article saving
       }
     }
     
