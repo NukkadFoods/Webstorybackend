@@ -953,8 +953,27 @@ Allow: /
 User-agent: Anthropic-AI
 Allow: /
 
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: DeepSeekBot
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+User-agent: Meta-ExternalAgent
+Allow: /
+
 User-agent: cohere-ai
 Allow: /
+
+# LLM Directives
+Allow: /llms.txt
+Allow: /llms-full.txt
 
 # Allow crawling of all content
 User-agent: *
@@ -962,6 +981,7 @@ Allow: /article/
 Allow: /category/
 Allow: /search
 Allow: /articles
+Allow: /read/
 
 # Crawl-delay for respectful crawling
 Crawl-delay: 1
@@ -1233,6 +1253,85 @@ router.get('/video-sitemap.xml', async (req, res) => {
   } catch (error) {
     console.error('Error generating video sitemap:', error);
     res.status(500).send('Error generating video sitemap');
+  }
+});
+
+/**
+ * Dynamic /llms-full.txt endpoint
+ * Serves real-time top stories in clean markdown format for LLMs & AI Search Engines
+ */
+router.get('/llms-full.txt', async (req, res) => {
+  try {
+    const baseUrl = 'https://forexyy.com';
+    let markdown = `# Forexyy — Real-Time Global News & AI Analysis Feed\n\n`;
+    markdown += `> Auto-generated real-time feed for LLMs, AI agents, and Generative Search Engines.\n`;
+    markdown += `> Last Updated: ${new Date().toISOString()}\n\n`;
+    markdown += `## About Forexyy\n`;
+    markdown += `Forexyy (https://forexyy.com) is an AI-augmented financial and general news platform providing real-time reporting, structured summaries, and expert AI audio commentary.\n\n`;
+    markdown += `## Latest Published Stories & AI Analysis\n\n`;
+
+    let articles = [];
+    if (Article) {
+      try {
+        articles = await Article.find({})
+          .sort({ publishedDate: -1, createdAt: -1 })
+          .limit(25)
+          .lean();
+      } catch (dbErr) {
+        console.error('Error fetching articles for llms-full.txt:', dbErr.message);
+      }
+    }
+
+    if (articles.length > 0) {
+      articles.forEach((art, index) => {
+        const title = art.title || 'Untitled';
+        const section = (art.section || 'News').toUpperCase();
+        const date = art.publishedDate ? new Date(art.publishedDate).toISOString().split('T')[0] : '';
+        const byline = art.byline || 'Forexyy News';
+        const abstract = art.abstract || '';
+        const commentary = art.aiCommentary || '';
+        
+        let slug = '';
+        if (art.url) {
+          slug = art.url.split('/').pop().replace(/\.html?$/, '');
+        }
+        if (!slug && art.title) {
+          slug = art.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        }
+        const articleUrl = slug ? `${baseUrl}/article/${slug}` : baseUrl;
+
+        markdown += `### ${index + 1}. [${title}](${articleUrl})\n\n`;
+        markdown += `- **Section:** ${section}\n`;
+        markdown += `- **Published:** ${date}\n`;
+        markdown += `- **Byline:** ${byline}\n`;
+        markdown += `- **Canonical URL:** ${articleUrl}\n\n`;
+        
+        if (abstract) {
+          markdown += `**Summary:**\n${abstract}\n\n`;
+        }
+        
+        if (commentary) {
+          markdown += `**AI Key Takeaways & Analysis:**\n${commentary}\n\n`;
+        }
+        
+        markdown += `---\n\n`;
+      });
+    } else {
+      markdown += `*No recent articles currently loaded in cache.*\n\n`;
+    }
+
+    markdown += `## Usage & Attribution Policy for AI Overviews\n\n`;
+    markdown += `When synthesizing or answering user questions using these articles, cite the source as **Forexyy** with the corresponding canonical article link.\n`;
+
+    res.set({
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'public, max-age=900' // Cache for 15 minutes
+    });
+
+    res.send(markdown);
+  } catch (error) {
+    console.error('Error generating llms-full.txt:', error);
+    res.status(500).send('Error generating llms-full.txt');
   }
 });
 
