@@ -1257,6 +1257,98 @@ router.get('/video-sitemap.xml', async (req, res) => {
 });
 
 /**
+ * Dynamic RSS 2.0 Feed for Google Publisher Center & News Aggregators
+ */
+router.get(['/feed', '/rss.xml'], async (req, res) => {
+  try {
+    const baseUrl = 'https://forexyy.com';
+    let articles = [];
+
+    if (Article) {
+      try {
+        articles = await Article.find({})
+          .sort({ publishedDate: -1, createdAt: -1 })
+          .limit(30)
+          .lean();
+      } catch (dbErr) {
+        console.error('Error fetching articles for RSS feed:', dbErr.message);
+      }
+    }
+
+    let rss = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" 
+     xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:media="http://search.yahoo.com/mrss/"
+     xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Forexyy | AI-Powered Global News &amp; Market Analysis</title>
+    <link>${baseUrl}</link>
+    <description>Real-time breaking news across world affairs, business, technology, finance, and politics with AI audio commentary.</description>
+    <language>en-us</language>
+    <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
+    <atom:link href="${baseUrl}/feed" rel="self" type="application/rss+xml"/>
+    <image>
+      <url>${baseUrl}/forexyy_logo_80.png</url>
+      <title>Forexyy</title>
+      <link>${baseUrl}</link>
+    </image>
+`;
+
+    articles.forEach((art) => {
+      const title = (art.title || 'Untitled').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const pubDate = new Date(art.publishedDate || art.createdAt || Date.now()).toUTCString();
+      const byline = art.byline || 'Forexyy News';
+      const section = art.section || 'General';
+      const abstract = (art.abstract || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const commentary = (art.aiCommentary || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+      let slug = '';
+      if (art.url) {
+        slug = art.url.split('/').pop().replace(/\.html?$/, '');
+      }
+      if (!slug && art.title) {
+        slug = art.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      }
+      const articleUrl = slug ? `${baseUrl}/article/${slug}` : baseUrl;
+
+      rss += `    <item>
+      <title>${title}</title>
+      <link>${articleUrl}</link>
+      <guid isPermaLink="true">${articleUrl}</guid>
+      <pubDate>${pubDate}</pubDate>
+      <dc:creator><![CDATA[${byline}]]></dc:creator>
+      <category><![CDATA[${section}]]></category>
+      <description><![CDATA[${abstract}]]></description>
+      <content:encoded><![CDATA[<p>${abstract}</p>${commentary ? `<h3>AI Analysis & Key Takeaways</h3><p>${commentary.replace(/\n/g, '<br/>')}</p>` : ''}]]></content:encoded>
+`;
+
+      if (art.imageUrl) {
+        rss += `      <media:content url="${art.imageUrl}" medium="image"/>
+      <enclosure url="${art.imageUrl}" type="image/jpeg" length="0"/>
+`;
+      }
+
+      rss += `    </item>
+`;
+    });
+
+    rss += `  </channel>
+</rss>`;
+
+    res.set({
+      'Content-Type': 'application/rss+xml; charset=utf-8',
+      'Cache-Control': 'public, max-age=900' // Cache for 15 mins
+    });
+
+    res.send(rss);
+  } catch (error) {
+    console.error('Error generating RSS feed:', error);
+    res.status(500).send('Error generating RSS feed');
+  }
+});
+
+/**
  * Dynamic /llms-full.txt endpoint
  * Serves real-time top stories in clean markdown format for LLMs & AI Search Engines
  */
