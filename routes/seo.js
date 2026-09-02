@@ -502,6 +502,12 @@ function generatePrerenderedHTML(meta) {
       "name": "Forexyy",
       "logo": { "@type": "ImageObject", "url": "${baseUrl}/logo.png" }
     },
+    "isAccessibleForFree": true,
+    "isPartOf": {
+      "@type": ["CreativeWork", "Product"],
+      "name": "Forexyy",
+      "productID": "CAowzdrHDA:openaccess"
+    },
     "speakable": {
       "@type": "SpeakableSpecification",
       "cssSelector": [".article-title", ".article-summary", ".ai-commentary"]
