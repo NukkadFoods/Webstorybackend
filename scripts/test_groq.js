@@ -1,11 +1,28 @@
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+try { require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }); } catch (e) {}
 
-const groqKeys = [
-    { name: 'GROQ_API_KEY', key: process.env.GROQ_API_KEY },
-    { name: 'GROQ_API_KEY_2', key: process.env.GROQ_API_KEY_2 },
-    { name: 'GROQ_API_KEY_3', key: process.env.GROQ_API_KEY_3 },
-    { name: 'GROQ_API_KEY_4', key: process.env.GROQ_API_KEY_4 }
-];
+function getGroqKeys() {
+    let keys = [];
+    if (process.env.GROQ_API_KEYS) {
+        keys = process.env.GROQ_API_KEYS.split(',').map((k, i) => ({
+            name: `GROQ_KEY_${i + 1}`,
+            key: k.trim()
+        })).filter(item => item.key);
+    } else {
+        const names = [
+            'GROQ_API_KEY', 'GROQ_API_KEY_1', 'GROQ_API_KEY_2', 'GROQ_API_KEY_3',
+            'GROQ_API_KEY_4', 'GROQ_API_KEY_5', 'GROQ_API_KEY_6', 'GROQ_API_KEY_7',
+            'GROQ_API_KEY_8', 'GROQ_API_KEY_9', 'GROQ_API_KEY_10', 'GROQ_API_KEY_11', 'GROQ_API_KEY_12'
+        ];
+        names.forEach(name => {
+            if (process.env[name]) {
+                keys.push({ name, key: process.env[name].trim() });
+            }
+        });
+    }
+    return keys;
+}
+
+const targetModel = process.env.GROQ_MODEL || 'qwen/qwen3.8-27b';
 
 async function testGroqKey(name, apiKey) {
     if (!apiKey) return { name, status: 'MISSING' };
@@ -19,7 +36,7 @@ async function testGroqKey(name, apiKey) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: 'llama-3.1-8b-instant',
+                model: targetModel,
                 messages: [{ role: 'user', content: 'Say OK' }],
                 max_tokens: 5
             })
@@ -39,7 +56,13 @@ async function testGroqKey(name, apiKey) {
 }
 
 async function main() {
-    console.log('🔍 Testing Groq API Keys...\n');
+    console.log(`🔍 Testing Groq API Keys with model: ${targetModel}...\n`);
+
+    const groqKeys = getGroqKeys();
+    if (groqKeys.length === 0) {
+        console.log('⚠️ No Groq API keys found in environment.');
+        return;
+    }
 
     let okCount = 0;
 
@@ -56,7 +79,7 @@ async function main() {
         }
     }
 
-    console.log('\n' + okCount + '/4 Groq API keys working');
+    console.log(`\n${okCount}/${groqKeys.length} Groq API keys working`);
 }
 
 main();

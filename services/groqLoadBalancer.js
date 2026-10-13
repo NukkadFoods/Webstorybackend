@@ -172,15 +172,32 @@ class GroqLoadBalancer {
   }
 }
 
-// Initialize with multiple API keys
-const apiKeys = [
-  process.env.GROQ_API_KEY,
-  process.env.GROQ_API_KEY_2,
-  process.env.GROQ_API_KEY_3,
-  process.env.GROQ_API_KEY_4,
-  process.env.GROQ_API_KEY_5,
-  process.env.GROQ_API_KEY_6
-].filter(key => key && key.trim() !== '');
+// Initialize with multiple API keys (supporting pool string or individual keys 1..12)
+let apiKeys = [];
+
+if (process.env.GROQ_API_KEYS) {
+  apiKeys = process.env.GROQ_API_KEYS.split(',').map(k => k.trim()).filter(Boolean);
+} else {
+  const candidateKeys = [
+    process.env.GROQ_API_KEY,
+    process.env.GROQ_API_KEY_1,
+    process.env.GROQ_API_KEY_2,
+    process.env.GROQ_API_KEY_3,
+    process.env.GROQ_API_KEY_4,
+    process.env.GROQ_API_KEY_5,
+    process.env.GROQ_API_KEY_6,
+    process.env.GROQ_API_KEY_7,
+    process.env.GROQ_API_KEY_8,
+    process.env.GROQ_API_KEY_9,
+    process.env.GROQ_API_KEY_10,
+    process.env.GROQ_API_KEY_11,
+    process.env.GROQ_API_KEY_12
+  ];
+  apiKeys = candidateKeys.filter(key => key && key.trim() !== '');
+}
+
+// Remove duplicates while preserving order
+apiKeys = [...new Set(apiKeys)];
 
 if (apiKeys.length === 0) {
   console.error('❌ No Groq API keys found in environment variables');

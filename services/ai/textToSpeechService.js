@@ -65,7 +65,7 @@ Keep it conversational and under 150 words.
 
       // Use Groq API for script generation
       const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: 'llama-3.1-8b-instant',
+        model: process.env.GROQ_MODEL || 'qwen/qwen3.8-27b',
         messages: [
           {
             role: 'system',

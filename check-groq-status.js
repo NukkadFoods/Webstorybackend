@@ -6,14 +6,23 @@
 require('dotenv').config();
 const fetch = require('node-fetch');
 
-const API_KEYS = [
-  { name: 'GROQ_API_KEY', key: process.env.GROQ_API_KEY },
-  { name: 'GROQ_API_KEY_2', key: process.env.GROQ_API_KEY_2 },
-  { name: 'GROQ_API_KEY_3', key: process.env.GROQ_API_KEY_3 },
-  { name: 'GROQ_API_KEY_4', key: process.env.GROQ_API_KEY_4 },
-  { name: 'GROQ_API_KEY_5', key: process.env.GROQ_API_KEY_5 },
-  { name: 'GROQ_API_KEY_6', key: process.env.GROQ_API_KEY_6 }
-];
+function getApiKeys() {
+  if (process.env.GROQ_API_KEYS) {
+    return process.env.GROQ_API_KEYS.split(',').map((k, i) => ({
+      name: `GROQ_KEY_${i + 1}`,
+      key: k.trim()
+    })).filter(item => item.key);
+  }
+  const names = [
+    'GROQ_API_KEY', 'GROQ_API_KEY_1', 'GROQ_API_KEY_2', 'GROQ_API_KEY_3',
+    'GROQ_API_KEY_4', 'GROQ_API_KEY_5', 'GROQ_API_KEY_6', 'GROQ_API_KEY_7',
+    'GROQ_API_KEY_8', 'GROQ_API_KEY_9', 'GROQ_API_KEY_10', 'GROQ_API_KEY_11', 'GROQ_API_KEY_12'
+  ];
+  return names.filter(n => process.env[n]).map(n => ({ name: n, key: process.env[n].trim() }));
+}
+
+const API_KEYS = getApiKeys();
+const targetModel = process.env.GROQ_MODEL || 'qwen/qwen3.8-27b';
 
 async function checkGroqKey(name, key) {
   try {
@@ -31,7 +40,7 @@ async function checkGroqKey(name, key) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: targetModel,
         messages: [
           { role: 'user', content: 'Say "test" in one word.' }
         ],

@@ -66,7 +66,7 @@ Perspective:`
             content: prompt
           }
         ],
-        model: 'llama-3.1-8b-instant', // Universal fast & intelligent model
+        model: process.env.GROQ_MODEL || 'qwen/qwen3.8-27b', // Fast & intelligent model
         max_tokens: 200,
         temperature: 0.7,
         top_p: 0.9
@@ -85,7 +85,7 @@ Perspective:`
         commentary,
         source: 'ai',
         generatedAt: new Date(),
-        model: 'llama-3.1-8b-instant',
+        model: process.env.GROQ_MODEL || 'qwen/qwen3.8-27b',
         topic
       };
 

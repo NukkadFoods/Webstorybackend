@@ -176,7 +176,7 @@ Keep the tone professional and analytical. Provide only the commentary without a
               content: prompt
             }
           ],
-          model: "llama-3.1-8b-instant",
+          model: process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
           temperature: 0.7,
           max_tokens: 500
         });

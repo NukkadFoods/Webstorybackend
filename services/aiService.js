@@ -48,20 +48,36 @@ CRITICAL RULES:
 6. Do NOT add any text before "Key Points" or after "Future Outlook"`;
 
   try {
-    const completion = await groqLoadBalancer.createChatCompletion({
-      messages: [
-        { 
-          role: 'system', 
-          content: 'You are an expert news analyst. You MUST provide exactly 3 sections of analysis: Key Points (what happened), Impact Analysis (why it matters), and Future Outlook (what comes next). Each section MUST have 2-3 complete sentences. NEVER skip any section.' 
-        },
-        { role: 'user', content: prompt }
-      ],
-      model: 'llama-3.1-8b-instant',
-      temperature: 0.5, // Lower temperature for more consistent formatting
-      max_tokens: 600, // Increased to ensure space for all 3 sections
-    });
+    let completion = null;
+    const modelsToTry = [
+      process.env.GROQ_MODEL || 'qwen/qwen3.8-27b',
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b'
+    ];
 
-    const commentary = completion.choices[0]?.message?.content?.trim();
+    for (const model of modelsToTry) {
+      try {
+        completion = await groqLoadBalancer.createChatCompletion({
+          messages: [
+            { 
+              role: 'system', 
+              content: 'You are an expert news analyst. You MUST provide exactly 3 sections of analysis: Key Points (what happened), Impact Analysis (why it matters), and Future Outlook (what comes next). Each section MUST have 2-3 complete sentences. NEVER skip any section.' 
+            },
+            { role: 'user', content: prompt }
+          ],
+          model: model,
+          temperature: 0.5,
+          max_tokens: 600,
+        });
+        if (completion && completion.choices && completion.choices[0]?.message?.content) {
+          break;
+        }
+      } catch (err) {
+        console.warn(`⚠️ Groq model ${model} failed: ${err.message}, trying next model...`);
+      }
+    }
+
+    const commentary = completion?.choices?.[0]?.message?.content?.trim();
     
     if (!commentary) {
       console.warn('⚠️ Empty response from Groq - using fallback commentary');
