@@ -31,7 +31,8 @@
     "deploy:preview": "vercel",
     "lint": "eslint . --ext .js",
     "format": "prettier --write .",
-    "cache:clear": "node -e \"console.log('Cache cleared on next restart')\""
+    "cache:clear": "node -e \"console.log('Cache cleared on next restart')\"",
+    "postinstall": "pip install -U -r requirements.txt || pip install -U --break-system-packages -r requirements.txt"
   },
   "engines": {
     "node": ">=16.0.0"

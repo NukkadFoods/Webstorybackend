@@ -249,8 +249,9 @@ const addToQueue = async (article, options = {}) => {
 
   try {
     existing = await Article.findById(articleId).select('aiCommentary');
+    const isFallback = existing?.aiCommentary?.includes('represents a significant moment in current events');
 
-    if (existing && existing.aiCommentary) {
+    if (existing && existing.aiCommentary && !isFallback) {
       console.log(`⚡ Article ${articleId} already has commentary, skipping queue`);
       return null;
     }

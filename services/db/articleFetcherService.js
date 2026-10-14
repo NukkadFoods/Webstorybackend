@@ -63,9 +63,10 @@ class ArticleFetcherService {
         try {
           // ✅ DUPLICATE CHECK #1: Check if article already exists in MongoDB
           const exists = await Article.findOne({ url: rawArticle.url });
+          const isFallback = exists?.aiCommentary?.includes('represents a significant moment in current events');
           
-          if (exists && exists.aiCommentary) {
-            console.log(`⏭️  Article already exists with commentary: "${rawArticle.title.substring(0, 40)}..."`);
+          if (exists && exists.aiCommentary && !isFallback) {
+            console.log(`⏭️  Article already exists with authentic commentary: "${rawArticle.title.substring(0, 40)}..."`);
             continue;
           }
 
